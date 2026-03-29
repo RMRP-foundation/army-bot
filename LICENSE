@@ -1,0 +1,42 @@
+END USER LICENSE AGREEMENT AND PROPRIETARY SOFTWARE LICENSE FOR "REGULAR ARMY BOT"
+Copyright (c) 2026 Effectys and fl3wmo
+All Rights Reserved.
+
+THIS END USER LICENSE AGREEMENT (hereinafter referred to as the "Agreement" or "License") IS A LEGALLY BINDING DOCUMENT BETWEEN THE AUTHORS AND COPYRIGHT HOLDERS OF THE SOFTWARE (hereinafter referred to as the "Licensor") AND THE INDIVIDUAL OR ENTITY DEPLOYING AND OPERATING THE SOFTWARE, SPECIFICALLY the Administration of the designated Discord Server ID 1245655012550512670 (hereinafter referred to as the "Licensee").
+
+THE MANDATORY TRANSFER OF SOURCE CODE AS STIPULATED BY THE LICENSEE'S INTERNAL REGULATIONS DOES NOT CONSTITUTE A TRANSFER OR ASSIGNMENT OF EXCLUSIVE COPYRIGHTS OR INTELLECTUAL PROPERTY RIGHTS.
+
+1. GRANT OF LICENSE
+1.1. Subject to the terms and conditions of this Agreement, the Licensor hereby grants the Licensee a limited, non-exclusive, non-transferable, and non-sublicensable license to compile, deploy, and execute the software program known as "Regular Army Bot" (hereinafter referred to as the "Software") strictly and exclusively on the Licensee's designated server infrastructure for the sole purpose of operating within one (1) primary virtual community (Discord Server) specifically identified by the Discord Guild ID 1245655012550512670 (Production environment) and Guild ID 1460315965639229615 (Testing/Staging environment). Any deployment or execution of the Software on any other Discord server, regardless of ownership, is strictly prohibited.
+
+2. RESTRICTIONS
+2.1. The Licensee is strictly PROHIBITED from taking the following actions:
+a) Claiming authorship, ownership, or intellectual property rights over the Software's source code, architecture, or operational logic;
+b) Utilizing the Software or any of its constituent parts for commercial purposes (including, but not limited to, resale, integration into monetized services, or paywalls) without prior explicit written consent from the Licensor;
+c) Distributing, selling, renting, leasing, sublicensing, or otherwise transferring the Software or its source code to any third parties;
+d) Removing, altering, or obscuring any copyright, trademark, or proprietary rights notices embedded within the Software.
+
+3. OWNERSHIP AND INTELLECTUAL PROPERTY
+3.1. The Software is licensed, not sold. All rights, titles, and interests, including but not limited to all exclusive copyrights, algorithms, database schemas, and associated documentation, shall remain the sole and exclusive property of the Licensor.
+3.2. Any modifications, adaptations, or derivative works created by the Licensee based upon the Software must retain the original copyright notices and shall not be distributed, published, or deployed outside of the Licensee's designated infrastructure.
+3.3. The Software may utilize, require, or integrate with third-party open-source components, libraries, or frameworks (including, but not limited to, discord.py, Beanie, Motor). Such third-party components are subject to their own respective licenses, and nothing in this Agreement restricts the Licensee's rights or obligations under those open-source licenses.
+
+4. DISCLAIMER OF WARRANTY AND LIMITATION OF LIABILITY
+4.1. THE SOFTWARE IS PROVIDED BY THE LICENSOR "AS IS" AND "AS AVAILABLE," WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+4.2. IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. THIS INCLUDES, BUT IS NOT LIMITED TO, ANY LOSS OF DATA, SERVER DOWNTIME, REPUTATIONAL DAMAGE, OR BUSINESS INTERRUPTION.
+4.3. The Licensor is under no obligation to provide maintenance, technical support, bug fixes, updates, or modifications to the Software (including adaptations for future changes to the Discord API or other third-party services), unless explicitly agreed upon in a separate written contract.
+
+5. DATA PRIVACY AND COMPLIANCE
+5.1. The Software is designed to collect, process, and store user data within a database (including, but not limited to, Discord IDs, nicknames, in-game identifiers, disciplinary records, and administrative logs).
+5.2. The Licensee acknowledges and agrees that they act as the sole Data Controller. The Licensee is strictly and solely responsible for complying with all applicable data protection laws, privacy regulations, and platform guidelines (including the Discord Developer Terms of Service).
+5.3. The Licensor shall not be held liable for any unlawful collection, storage, processing, or misuse of personal data conducted by the Licensee through the deployment and operation of the Software.
+
+6. TERMINATION
+6.1. This License shall automatically and immediately terminate without notice if the Licensee fails to comply with any provision of this Agreement.
+6.2. Upon termination, the Licensee must immediately cease all use of the Software and permanently destroy all copies, full or partial, of the Software and its source code in their possession or control.
+
+7. GOVERNING LAW AND JURISDICTION
+7.1. This Agreement shall be governed by and construed in accordance with the laws of the Republic of Belarus.
+7.2. Any disputes arising out of or in connection with this Agreement shall be subject to the exclusive jurisdiction of the competent courts of the Republic of Belarus.
+
+By downloading, compiling, deploying, or utilizing the Software, the Licensee explicitly acknowledges that they have read this Agreement, understood it, and agree to be absolutely bound by its terms and conditions.

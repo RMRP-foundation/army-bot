@@ -1,0 +1,155 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+import discord
+
+import config
+from utils.exceptions import StaticInputRequired
+
+if TYPE_CHECKING:
+    from database.models import User
+
+from cachetools import TTLCache
+
+names_cache = TTLCache(maxsize=1000, ttl=3600)
+
+
+async def ask_game_id(interaction: discord.Interaction) -> None:
+    await interaction.response.send_message("")
+
+
+async def get_full_name(interaction: discord.Interaction) -> str | None:
+    if interaction.user.id in names_cache:
+        return names_cache[interaction.user.id]
+
+    from database.models import User
+
+    user_info = await User.find_one(User.discord_id == interaction.user.id)
+    if user_info and user_info.first_name and user_info.last_name:
+        full_name = f"{user_info.first_name} {user_info.last_name}"
+        names_cache[interaction.user.id] = full_name
+        return full_name
+    else:
+        return None
+
+
+def format_game_id(game_id: int | None) -> str:
+    if game_id is None:
+        return "N/A"
+
+    game_id_str = str(game_id).zfill(6)
+    return f"{game_id_str[:3]}-{game_id_str[3:]}"
+
+
+def formatted_static_to_int(static_str: str) -> int | None:
+    cleaned = "".join(filter(str.isdigit, static_str)).lstrip("0")
+    if cleaned == "":
+        return 0
+    try:
+        return int(cleaned)
+    except ValueError:
+        return None
+
+
+def transliterate_abbreviation(abbreviation: str) -> str:
+    translit_map = {
+        "А": "A",
+        "В": "B",
+        "Е": "E",
+        "К": "K",
+        "М": "M",
+        "Н": "H",
+        "О": "O",
+        "Р": "P",
+        "С": "C",
+        "Т": "T",
+        "Х": "X",
+    }
+    return "".join(translit_map.get(char, char) for char in abbreviation)
+
+
+def parse_full_name(full_name: str) -> tuple[str, str] | None:
+    """
+    Парсит полное имя в формате "Имя Фамилия".
+    Возвращает (first_name, last_name) или None если формат неверный.
+    """
+    parts = full_name.strip().split(" ", 1)
+    if len(parts) != 2 or not parts[0] or not parts[1]:
+        return None
+    return parts[0], parts[1]
+
+
+async def update_user_name_if_changed(
+    user, full_name: str, initiator: discord.Member | None = None
+) -> bool:
+    """
+    Обновляет имя пользователя если оно отличается от текущего.
+    Если передан initiator, логирует изменение в кадровый аудит.
+    Возвращает True если имя было обновлено.
+    """
+    parsed = parse_full_name(full_name)
+    if not parsed:
+        return False
+
+    first_name, last_name = parsed
+    if user.first_name != first_name or user.last_name != last_name:
+        user.first_name = first_name
+        user.last_name = last_name
+        await user.save()
+        invalidate_user_cache(user.discord_id)
+
+        if initiator:
+            from utils.audit import AuditAction, audit_logger
+
+            await audit_logger.log_action(
+                action=AuditAction.NICKNAME_CHANGED,
+                initiator=initiator,
+                target=user.discord_id,
+            )
+
+        return True
+    return False
+
+
+def needs_static_input(user: User | None) -> bool:
+    """Проверяет, требуется ли пользователю ввести static."""
+    if user is None:
+        return False
+    return user.pre_inited and user.rank is not None and user.static is None
+
+
+async def get_initiator(interaction: discord.Interaction) -> User | None:
+    from database.models import User
+
+    initiator = await User.find_one(User.discord_id == interaction.user.id)
+
+    if needs_static_input(initiator):
+        from ui.modals.static_input import StaticInputModal
+
+        await interaction.response.send_modal(StaticInputModal())
+        raise StaticInputRequired()
+
+    return initiator
+
+
+def display_rank(rank_index: int | None) -> str:
+    """Возвращает "Эмодзи Название ранга" или "Без звания", если ранг невалиден."""
+    if rank_index is not None and 0 <= rank_index < len(config.RANKS):
+        return f"{config.RANK_EMOJIS[rank_index]} {config.RANKS[rank_index]}"
+
+    return "Без звания"
+
+async def get_user_defaults(interaction: discord.Interaction):
+    """Получить данные пользователя для заполнения формы."""
+    user = await get_initiator(interaction)
+    user_name, static_id = None, None
+    if user:
+        if user.full_name:
+            user_name = user.full_name
+        if user.static:
+            static_id = format_game_id(user.static)
+    return user, user_name, static_id
+
+def invalidate_user_cache(user_id: int) -> None:
+    names_cache.pop(user_id, None)
