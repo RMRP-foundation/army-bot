@@ -20,6 +20,13 @@ async def _execute_update(
         BottomMessage.channel_id == channel_id
     )
 
+    channel = bot.get_channel(channel_id)
+    if not channel:
+        logger.warning(f"Channel {channel_id} not found")
+        return
+
+    new_message = await channel.send(embed=embed, view=view)
+
     if bottom_message:
         try:
             await bot.http.delete_message(channel_id, bottom_message.message_id)
@@ -29,13 +36,6 @@ async def _execute_update(
             logger.warning(f"No permission to delete message in channel {channel_id}")
         except Exception as e:
             logger.error(f"Failed to delete bottom message: {e}")
-
-    channel = bot.get_channel(channel_id)
-    if not channel:
-        logger.warning(f"Channel {channel_id} not found")
-        return
-
-    new_message = await channel.send(embed=embed, view=view)
 
     if bottom_message:
         bottom_message.message_id = new_message.id
