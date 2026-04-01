@@ -1,8 +1,20 @@
 import discord
+from discord.ext import commands
 
 import config
 from database.models import User
+from utils.exceptions import SilentCheckFailure
 
+
+def has_update_permission():
+    async def predicate(ctx):
+        if ctx.author.guild_permissions.administrator:
+            return True
+        if await is_senior_officer(ctx.author.id):
+            return True
+        raise SilentCheckFailure()
+
+    return commands.check(predicate)
 
 async def get_user_rank(user_id: int) -> int | None:
     """Получить ранг пользователя по его Discord ID"""

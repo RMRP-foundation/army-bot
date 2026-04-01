@@ -9,7 +9,7 @@ import config
 from database import divisions
 from database.connection import establish_db_connection
 from database.models import User
-from error_handling import _custom_view_on_error, on_tree_error
+from error_handling import _custom_view_on_error, on_tree_error, on_command_error
 from ui.views import load_buttons
 from utils.audit import audit_logger
 from utils.roles import get_rank_from_roles
@@ -96,3 +96,6 @@ class Bot(commands.Bot):
             return await guild.fetch_member(discord_id)
         except discord.NotFound:
             return None
+
+    async def on_command_error(self, ctx, error):
+        await on_command_error(ctx, error)

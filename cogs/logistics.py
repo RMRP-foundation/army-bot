@@ -5,6 +5,7 @@ from bot import Bot
 from database.models import LogisticsRequest
 from ui.views.logistics import LogisticsApplyView
 from utils.bottom_message import update_bottom_message as _update_bottom_message
+from utils.permissions import has_update_permission
 
 # 00:00 MSK = 21:00 UTC
 RESTART_TIME = datetime.time(hour=21, minute=0, tzinfo=datetime.timezone.utc)
@@ -41,7 +42,7 @@ class Logistics(commands.Cog):
                     continue
 
     @commands.command(name="refresh_logistics")
-    @commands.has_permissions(administrator=True)
+    @has_update_permission()
     async def update_command(self, ctx: commands.Context):
         if ctx.channel.id != channel_id:
             return

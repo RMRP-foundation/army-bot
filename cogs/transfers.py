@@ -4,6 +4,7 @@ from bot import Bot
 from database import divisions
 from ui.views.transfers import TransferView
 from utils.bottom_message import update_bottom_message as _update_bottom_message
+from utils.permissions import has_update_permission
 
 
 async def update_bottom_message(bot: Bot, channel_id: int):
@@ -24,7 +25,7 @@ class Transfers(commands.Cog):
         self.bot = bot
 
     @commands.command(name="refresh_transfer")
-    @commands.has_permissions(administrator=True)
+    @has_update_permission()
     async def update_command(self, ctx: commands.Context):
         await update_bottom_message(self.bot, ctx.channel.id)
 

@@ -5,7 +5,7 @@ import traceback
 import discord
 from discord import app_commands
 
-from utils.exceptions import StaticInputRequired
+from utils.exceptions import StaticInputRequired, SilentCheckFailure
 
 _original_view_on_error = discord.ui.View.on_error
 
@@ -58,3 +58,7 @@ async def on_tree_error(
                       content=f"### Произошла ошибка [{error_id}]",
                       ephemeral=True
                       )
+
+async def on_command_error(ctx, error):
+    if isinstance(error, SilentCheckFailure):
+        return

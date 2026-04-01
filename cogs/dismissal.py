@@ -4,6 +4,7 @@ import config
 from bot import Bot
 from ui.views.dismissal import DismissalApplyView
 from utils.bottom_message import update_bottom_message as _update_bottom_message
+from utils.permissions import has_update_permission
 
 channel_id = config.CHANNELS["dismissal"]
 
@@ -17,7 +18,7 @@ class Dismissal(commands.Cog):
         self.bot = bot
 
     @commands.command(name="refresh_dismissal")
-    @commands.has_permissions(administrator=True)
+    @has_update_permission()
     async def update_command(self, ctx: commands.Context):
         if ctx.channel.id != channel_id:
             return
