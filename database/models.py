@@ -90,7 +90,7 @@ class User(Document):
         if self.division is not None:
             div = divisions.get_division(self.division)
             if div:
-                if div.abbreviation == "ВА":
+                if div.abbreviation in ["ВА", "КМБ"]:
                     parts.append(div.abbreviation)
                 else:
                     parts.append(transliterate_abbreviation(div.abbreviation))
@@ -163,6 +163,7 @@ class ReinstatementRequest(Document):
 
 class RoleType(str, Enum):
     ARMY = "army"  # ВС РФ
+    KMB = "kmb" # КМБ
     SUPPLY_ACCESS = "supply_access"  # Доступ к поставке
     GOV_EMPLOYEE = "gov_employee"  # Гос. сотрудник
 
@@ -194,6 +195,7 @@ class RoleRequest(Document):
     def _get_role_type_name(self) -> str:
         names = {
             RoleType.ARMY: "ВС РФ",
+            RoleType.KMB: "КМБ",
             RoleType.SUPPLY_ACCESS: "Доступ к поставке",
             RoleType.GOV_EMPLOYEE: "Гос. сотрудник",
         }
@@ -223,7 +225,7 @@ class RoleRequest(Document):
             timestamp=self.sent_at,
         )
 
-        if self.role_type == RoleType.ARMY and self.data:
+        if self.role_type in [RoleType.ARMY, RoleType.KMB] and self.data:
             e.add_field(name="Заявитель", value=self.data.full_name)
             e.add_field(name="Статик", value=format_game_id(self.data.static_id))
         elif self.extended_data:

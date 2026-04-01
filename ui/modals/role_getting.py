@@ -88,6 +88,82 @@ class RoleRequestModal(discord.ui.Modal, title="Заявление на полу
         await update_bottom_message(interaction.client)
 
 
+class KMBRequestModal(discord.ui.Modal, title="Заявление на КМБ"):
+    name = name_component()
+    static_id = static_label()
+    footer = discord.ui.TextDisplay(
+        "Если вы что-то не понимаете, обратитесь к военнослужащему за помощью."
+    )
+
+    def __init__(self, user_name: str | None, static_id: str | None):
+        super().__init__()
+        self.name.default = user_name
+        self.static_id.component.default = static_id
+
+    async def on_submit(self, interaction: discord.Interaction):
+        opened_request = await RoleRequest.find_one(
+            RoleRequest.user == interaction.user.id,
+            RoleRequest.checked == False,  # noqa: E712
+        )
+        if opened_request is not None:
+            await interaction.response.send_message(
+                "### У вас уже есть открытое заявление на рассмотрении.\n"
+                "Ожидайте его рассмотрения.",
+                ephemeral=True,
+            )
+            return
+
+        try:
+            static_id = formatted_static_to_int(self.static_id.component.value)
+        except (ValueError, TypeError):
+            await interaction.response.send_message(
+                "### Вы ввели некорректный статик. "
+                "Правильный формат: ХХХ-ХХХ. Пример: 537-328.",
+                ephemeral=True,
+            )
+            return
+
+        if not nickname_regex.match(self.name.value):
+            await interaction.response.send_message(
+                "### Вы ввели некорректное имя и фамилию. "
+                "Правильный формат: Иван Иванов.",
+                ephemeral=True,
+            )
+            return
+
+        try:
+            await interaction.response.send_message(
+                "### Заявление отправлено на рассмотрение.", ephemeral=True
+            )
+        except discord.NotFound:
+            pass
+
+        request = RoleRequest(
+            id=await get_next_id("role_requests"),
+            user=interaction.user.id,
+            role_type=RoleType.KMB,
+            data=RoleData(
+                full_name=self.name.value,
+                static_id=static_id,
+            )
+        )
+        await request.create()
+
+        view = discord.ui.View(timeout=None)
+        view.add_item(ApproveRoleButton(request_id=request.id))
+        view.add_item(RejectRoleButton(request_id=request.id))
+
+        await interaction.channel.send(
+            content=f"-# ||<@{interaction.user.id}>||",
+            embed=await request.to_embed(),
+            view=view,
+        )
+
+        from cogs.role_getting import update_bottom_message
+
+        await update_bottom_message(interaction.client)
+
+
 class SupplyAccessModal(discord.ui.Modal, title="Заявление на доступ к поставке"):
     name = discord.ui.TextInput(
         label="Ваше имя и фамилия", placeholder="Иван Иванов", max_length=25

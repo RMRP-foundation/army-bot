@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 closed_requests = set()
 
 
-async def _check_can_apply(interaction: discord.Interaction) -> bool:
+async def _check_can_apply(interaction: discord.Interaction, check_blacklist: bool = False) -> bool:
     """Проверить, может ли пользователь подать заявку."""
     opened_request = await RoleRequest.find_one(
         RoleRequest.user == interaction.user.id,
@@ -35,22 +35,22 @@ async def _check_can_apply(interaction: discord.Interaction) -> bool:
             ephemeral=True,
         )
         return False
-
-    user = await get_initiator(interaction)
-    if user and user.blacklist:
-        await interaction.response.send_message(
-            "### Вы не можете подать заявление на роль, "
-            "так как на вас наложен черный список.\n"
-            f"Дата окончания: {discord.utils.format_dt(user.blacklist.ends_at, 'd')}.",
-            ephemeral=True,
-        )
-        return False
+    if check_blacklist:
+        user = await get_initiator(interaction)
+        if user and user.blacklist:
+            await interaction.response.send_message(
+                "### Вы не можете подать заявление на роль, "
+                "так как на вас наложен черный список.\n"
+                f"Дата окончания: {discord.utils.format_dt(user.blacklist.ends_at, 'd')}.",
+                ephemeral=True,
+            )
+            return False
     return True
 
 
 async def army_button_callback(interaction: discord.Interaction):
     """Callback для кнопки ВС РФ."""
-    if not await _check_can_apply(interaction):
+    if not await _check_can_apply(interaction, check_blacklist=True):
         return
 
     _, user_name, static_id = await get_user_defaults(interaction)
@@ -59,6 +59,19 @@ async def army_button_callback(interaction: discord.Interaction):
 
     await interaction.response.send_modal(
         RoleRequestModal(user_name=user_name, static_id=static_id)
+    )
+
+
+async def kmb_button_callback(interaction: discord.Interaction):
+    if not await _check_can_apply(interaction, check_blacklist=True):
+        return
+
+    _, user_name, static_id = await get_user_defaults(interaction)
+
+    from ui.modals.role_getting import KMBRequestModal
+
+    await interaction.response.send_modal(
+        KMBRequestModal(user_name=user_name, static_id=static_id)
     )
 
 
@@ -110,6 +123,15 @@ class RoleApplyView(discord.ui.LayoutView):
     )
     army_button.callback = army_button_callback
 
+    # Кнопка КМБ
+    kmb_button = discord.ui.Button(
+        label="КМБ",
+        emoji="🔰",
+        style=discord.ButtonStyle.secondary,
+        custom_id="role_apply_kmb",
+    )
+    kmb_button.callback = kmb_button_callback
+
     # Кнопка Доступ к поставке
     supply_button = discord.ui.Button(
         label="Доступ к поставке",
@@ -130,6 +152,7 @@ class RoleApplyView(discord.ui.LayoutView):
 
     action_row = discord.ui.ActionRow()
     action_row.add_item(army_button)
+    action_row.add_item(kmb_button)
     action_row.add_item(supply_button)
     action_row.add_item(gov_button)
     container.add_item(action_row)
@@ -139,6 +162,7 @@ def get_required_rank(role_type: RoleType) -> int:
     """Получить минимальное звание для одобрения заявки."""
     ranks = {
         RoleType.ARMY: config.RankIndex.JUNIOR_LIEUTENANT,
+        RoleType.KMB: config.RankIndex.JUNIOR_LIEUTENANT,
         RoleType.SUPPLY_ACCESS: config.RankIndex.LIEUTENANT_COLONEL,
         RoleType.GOV_EMPLOYEE: config.RankIndex.LIEUTENANT_COLONEL,
     }
@@ -164,7 +188,7 @@ async def check_approve_permission(
         return True
 
     # Для ВС РФ - дополнительная проверка по подразделению
-    if request.role_type == RoleType.ARMY:
+    if request.role_type in [RoleType.ARMY, RoleType.KMB]:
         division = divisions.get_division(user.division)
         if not division:
             return False
@@ -220,6 +244,7 @@ class ApproveRoleButton(
             closed_requests.discard(self.request_id)
             role_names = {
                 RoleType.ARMY: "Младший лейтенант",
+                RoleType.KMB: "Младший лейтенант",
                 RoleType.SUPPLY_ACCESS: "Подполковник",
                 RoleType.GOV_EMPLOYEE: "Полковник",
             }
@@ -294,6 +319,43 @@ class ApproveRoleButton(
                 target=user.discord_id,
             )
 
+        elif request.role_type == RoleType.KMB:
+            user = await User.find_one(User.discord_id == request.user)
+            if not user:
+                user = User(discord_id=request.user)
+
+            user.rank = 0  # Рядовой
+            user.division = 8
+            user.first_name, user.last_name = request.data.full_name.split(" ", 1)
+            user.static = request.data.static_id
+            user.invited_at = datetime.datetime.now()
+            user.pre_inited = True
+            await user.save()
+
+            # Роли: Военнослужащий, Рядовой, КМБ
+            role_ids = [
+                config.RoleId.MILITARY.value,
+                config.RANK_ROLES[config.RANKS[0]],
+                config.RoleId.KMB.value
+            ]
+
+            roles_to_add = [interaction.guild.get_role(role_id) for role_id in role_ids]
+            new_roles = [
+                role for role in user_discord.roles if role.id not in role_ids
+            ] + [role for role in roles_to_add if role is not None]
+
+            await user_discord.edit(
+                nick=user.discord_nick,
+                roles=new_roles,
+                reason=f"Одобрено получение роли КМБ by {interaction.user.id}"
+            )
+
+            await audit_logger.log_action(
+                action=AuditAction.INVITED,
+                initiator=interaction.user,
+                target=user.discord_id,
+            )
+
         elif request.role_type == RoleType.SUPPLY_ACCESS:
             # Логика для Доступ к поставке
             role = interaction.guild.get_role(config.RoleId.SUPPLY_ACCESS.value)
@@ -333,6 +395,7 @@ class ApproveRoleButton(
         # Уведомление в ЛС
         role_names = {
             RoleType.ARMY: "ВС РФ",
+            RoleType.KMB: "КМБ",
             RoleType.SUPPLY_ACCESS: "Доступ к поставке",
             RoleType.GOV_EMPLOYEE: "Гос. сотрудник",
         }
@@ -384,6 +447,7 @@ class RejectRoleButton(
             closed_requests.discard(self.request_id)
             role_names = {
                 RoleType.ARMY: "Младший лейтенант",
+                RoleType.KMB: "Младший лейтенант",
                 RoleType.SUPPLY_ACCESS: "Подполковник",
                 RoleType.GOV_EMPLOYEE: "Полковник",
             }
@@ -410,6 +474,7 @@ class RejectRoleButton(
         # Уведомление в ЛС
         role_names = {
             RoleType.ARMY: "ВС РФ",
+            RoleType.KMB: "КМБ",
             RoleType.SUPPLY_ACCESS: "Доступ к поставке",
             RoleType.GOV_EMPLOYEE: "Гос. сотрудник",
         }

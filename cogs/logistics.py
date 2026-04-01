@@ -6,8 +6,8 @@ from database.models import LogisticsRequest
 from ui.views.logistics import LogisticsApplyView
 from utils.bottom_message import update_bottom_message as _update_bottom_message
 
-# 03:00 MSK = 00:00 UTC
-RESTART_TIME = datetime.time(hour=0, minute=0, tzinfo=datetime.timezone.utc)
+# 00:00 MSK = 21:00 UTC
+RESTART_TIME = datetime.time(hour=21, minute=0, tzinfo=datetime.timezone.utc)
 channel_id = config.CHANNELS["logistics"]
 
 async def update_bottom_message(bot: Bot):
