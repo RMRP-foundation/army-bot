@@ -40,10 +40,11 @@ class AutoDismissal(commands.Cog):
 
         embed = await request.to_embed(self.bot)
 
-        division = None
         user_division = divisions.get_division(user_db.division)
         if user_division and user_division.positions:
             division = user_division
+        else:
+            division = divisions.get_division_by_abbreviation("ВК")
 
         positions = division.positions if division else []
         mentions = [

@@ -137,6 +137,15 @@ class DismissalManagementButton(
                 "❌ Заявка не найдена или уже обработана.", ephemeral=True
             )
             return
+
+        if (req.rank_index or 0) <= officer.rank:
+            await interaction.response.send_message(
+                "❌ Вы не можете увольнять пользователей "
+                "равного или старшего звания.",
+                ephemeral=True,
+            )
+            return
+
         closed_requests.add(self.request_id)
 
         if self.action == "reject":
