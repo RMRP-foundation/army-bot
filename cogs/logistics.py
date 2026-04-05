@@ -7,8 +7,8 @@ from ui.views.logistics import LogisticsApplyView
 from utils.bottom_message import update_bottom_message as _update_bottom_message
 from utils.permissions import has_update_permission
 
-# 00:00 MSK = 21:00 UTC
-RESTART_TIME = datetime.time(hour=21, minute=0, tzinfo=datetime.timezone.utc)
+# 03:00 MSK = 00:00 UTC
+RESTART_TIME = datetime.time(hour=0, minute=0, tzinfo=datetime.timezone.utc)
 channel_id = config.CHANNELS["logistics"]
 
 async def update_bottom_message(bot: Bot):
@@ -24,8 +24,13 @@ class Logistics(commands.Cog):
 
     @tasks.loop(time=RESTART_TIME)
     async def cleanup_task(self):
-        """Автоматически отклоняет все PENDING заявки при рестарте."""
-        pending = await LogisticsRequest.find(LogisticsRequest.status == "PENDING").to_list()
+        """Автоматически отклоняет все PENDING заявки за предыдущие дни при рестарте."""
+        now = datetime.datetime.now(datetime.timezone.utc)
+        cutoff = now.replace(hour=0, minute=0, second=0, microsecond=0) - datetime.timedelta(hours=3)
+        pending = await LogisticsRequest.find(
+            LogisticsRequest.status == "PENDING",
+            LogisticsRequest.created_at < cutoff,
+        ).to_list()
         if not pending: return
 
         channel = self.bot.get_channel(config.CHANNELS["logistics"])
