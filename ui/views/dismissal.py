@@ -210,6 +210,9 @@ class DismissalManagementButton(
             target_user_db.position = None
             await target_user_db.save()
 
+            from utils.dismissal_logic import cleanup_user_leaves
+            await cleanup_user_leaves(interaction.client, req.user_id)
+
             target_member = await interaction.client.getch_member(req.user_id)
             if target_member:
                 try:

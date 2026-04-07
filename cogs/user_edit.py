@@ -190,6 +190,9 @@ class UserEdit(commands.Cog):
             user_info.position = None
             await user_info.save()
 
+            from utils.dismissal_logic import cleanup_user_leaves
+            await cleanup_user_leaves(interaction.client, user.id)
+
             await modal_interaction.edit_original_response(
                 content=f"✅ {user.mention} уволен."
             )

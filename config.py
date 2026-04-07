@@ -113,6 +113,8 @@ CHANNELS = (
         "sso_patrol": 1291122702752420013,
         "materials": 1318570731457613844,
         "logistics": 1424686733319995432,
+        "ic_leave": 1276358675396690024,
+        "ooc_leave": 1246119775436931182,
     }
     if IS_PRODUCTION
     else {
@@ -128,6 +130,8 @@ CHANNELS = (
         "sso_patrol": 1484560560421998755,
         "materials": 1484560587101831288,
         "logistics": 1484936671169614005,
+        "ic_leave": 1490255233345912913,
+        "ooc_leave": 1490255253918974114,
     }
 )
 
@@ -165,6 +169,10 @@ SUPPLY_LIMITS = {
     "Дефибриллятор": 15,  # Конкретный предмет
 }
 
+IC_MAX_DAYS = 5
+OOC_MIN_DAYS = 7
+OOC_MAX_DAYS = 30
+
 SSO_FAIL_COOLDOWN = 300
 MATERIAL_PRICE = 8
 
@@ -190,6 +198,8 @@ if IS_PRODUCTION:
         UNIT_COMMANDER = 1246113827972583474  # Командир подразделения
         UNIT_DEPUTY_COMMANDER = 1246113944524034070  # Зам. командира подразделения
         SUPPLIER = 1262452148675809380  # Поставщик
+        IC_LEAVE = 1246115364732141569  # IC Отпуск
+        OOC_LEAVE = 1246114982995820634  # OOC отпуск
 
 else:
 
@@ -207,6 +217,8 @@ else:
         UNIT_COMMANDER = 1484561277559902321  # Командир подразделения
         UNIT_DEPUTY_COMMANDER = 1484561300544552960  # Зам. командира подразделения
         SUPPLIER = 1484937657753800915  # Поставщик
+        IC_LEAVE = 1490255314459824259  # IC Отпуск
+        OOC_LEAVE = 1490255334265327616  # OOC отпуск
 
 
 PENALTY_THRESHOLD = 5

@@ -65,6 +65,7 @@ class User(Document):
     rank: int | None = None
     position: str | None = None
     division: int | None = None
+    leave_status: str | None = None
     invited_at: datetime.datetime | None = None
     blacklist: Blacklist | None = None
     last_supply_at: datetime.datetime | None = None
@@ -87,6 +88,9 @@ class User(Document):
         from database import divisions
 
         parts = []
+        if self.leave_status:
+            parts.append(self.leave_status)
+
         if self.division is not None:
             div = divisions.get_division(self.division)
             if div:
@@ -669,6 +673,99 @@ class LogisticsRequest(Document):
 
     class Settings:
         name = "logistics_requests"
+
+
+class LeaveType(str, Enum):
+    IC = "IC"
+    OOC = "OOC"
+
+
+class LeaveRequest(Document):
+    id: int
+    user_id: int
+    leave_type: LeaveType
+    reason: str
+    days: int
+    original_nick: str | None = None  # Ник до отпуска для ССО
+
+    status: str = "PENDING"
+    reviewer_id: int | None = None
+    annuller_id: int | None = None
+    annulled_at: datetime.datetime | None = None
+
+    created_at: datetime.datetime = Field(default_factory=discord.utils.utcnow)
+    approved_at: datetime.datetime | None = None
+    ends_at: datetime.datetime | None = None
+    message_id: int | None = None
+
+    async def to_embed(self) -> discord.Embed:
+        from database import divisions
+
+        status_map = {
+            "PENDING": ("⏳", discord.Color.gold()),
+            "APPROVED": ("✅", discord.Color.green()),
+            "REJECTED": ("❌", discord.Color.red()),
+            "EXPIRED": ("🕐", discord.Color.dark_grey()),
+            "ANNULLED": ("🚫", discord.Color.dark_grey()),
+        }
+        emoji, color = status_map.get(
+            self.status, ("❓", discord.Color.default())
+        )
+
+        def to_utc(dt: datetime.datetime | None):
+            if dt is None: return None
+            return dt.replace(tzinfo=datetime.timezone.utc) if dt.tzinfo is None else dt
+
+        ends_at = to_utc(self.ends_at)
+        created_at = to_utc(self.created_at)
+        annulled_at = to_utc(self.annulled_at)
+
+        e = discord.Embed(
+            title=f"{emoji} Заявление на {self.leave_type.value} отпуск #{self.id}",
+            color=color,
+            timestamp=created_at,
+        )
+
+        requester = await User.find_one(User.discord_id == self.user_id)
+        e.add_field(name="Имя Фамилия", value=requester.full_name, inline=True)
+        e.add_field(name="Статик", value=format_game_id(requester.static), inline=True)
+
+        e.add_field(name="Звание", value=display_rank(requester.rank), inline=False)
+        div_name = divisions.get_division_name(requester.division) or "Нет"
+        e.add_field(name="Подразделение", value=div_name, inline=True)
+
+        if requester.position:
+            e.add_field(name="Должность", value=requester.position, inline=True)
+
+        if self.ends_at:
+            ends_fmt = (
+                f"{discord.utils.format_dt(ends_at, 'd')} "
+                f"({discord.utils.format_dt(ends_at, 'R')})"
+            )
+            e.add_field(name="Дата окончания", value=ends_fmt, inline=False)
+        else:
+            e.add_field(name="Продолжительность", value=f"{self.days} дн.", inline=False)
+
+        e.add_field(name="Причина", value=self.reason, inline=False)
+
+        if self.reviewer_id:
+            e.add_field(name="Рассмотрел", value=f"<@{self.reviewer_id}>", inline=True)
+
+        if self.annuller_id and annulled_at:
+            e.add_field(
+                name="Аннулировал",
+                value=(
+                    f"<@{self.annuller_id}> "
+                    f"{discord.utils.format_dt(annulled_at, 'R')}"
+                ),
+                inline=False,
+            )
+
+        e.set_footer(text="Отправлено")
+        return e
+
+    class Settings:
+        name = "leave_requests"
 
 class BottomMessage(Document):
     channel_id: Indexed(int, unique=True)

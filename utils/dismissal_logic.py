@@ -1,7 +1,7 @@
 import datetime
 import discord
 import config
-from database.models import User, Blacklist
+from database.models import User, Blacklist, LeaveRequest
 from utils.user_data import format_game_id
 
 
@@ -56,3 +56,48 @@ async def check_and_apply_penalty(
         return True
 
     return False
+
+
+async def cleanup_user_leaves(bot, user_id: int):
+    """Аннулирует или отклоняет отпуска пользователя при увольнении."""
+
+    pending_reqs = await LeaveRequest.find(
+        LeaveRequest.user_id == user_id,
+        LeaveRequest.status == "PENDING"
+    ).to_list()
+
+    for req in pending_reqs:
+        req.status = "REJECTED"
+        await req.save()
+        await _update_leave_message(bot, req)
+
+    active_reqs = await LeaveRequest.find(
+        LeaveRequest.user_id == user_id,
+        LeaveRequest.status == "APPROVED"
+    ).to_list()
+
+    for req in active_reqs:
+        user_db = await User.find_one(User.discord_id == user_id)
+        user_db.leave_status = None
+        await user_db.save()
+
+        from cogs.leave import cancel_leave_timer
+        cancel_leave_timer(req.id)
+
+        req.status = "ANNULLED"
+        req.annuller_id = bot.user.id
+        req.annulled_at = discord.utils.utcnow()
+        await req.save()
+        await _update_leave_message(bot, req)
+
+
+async def _update_leave_message(bot, req: LeaveRequest):
+    """Функция для обновления сообщения в канале отпусков."""
+    try:
+        channel_id = config.CHANNELS["ic_leave"] if req.leave_type.value == "IC" else config.CHANNELS["ooc_leave"]
+        channel = bot.get_channel(channel_id)
+        if channel and req.message_id:
+            msg = await channel.fetch_message(req.message_id)
+            await msg.edit(view=None, embed=await req.to_embed())
+    except Exception:
+        pass

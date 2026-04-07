@@ -61,6 +61,8 @@ class Bot(commands.Bot):
         logger.info(f"Logged in as {self.user} (ID: {self.user.id})")
         logger.info("------")
         await self._sync_users()
+        from cogs.leave import restore_leave_timers
+        await restore_leave_timers(self)
 
     async def _load_cogs(self):
         for file in os.listdir("./cogs"):
