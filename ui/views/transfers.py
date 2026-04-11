@@ -45,7 +45,7 @@ class TransferView(discord.ui.LayoutView):
 
 
 def can_user_handle_transfer(user: User, division_ids: list[int]) -> bool:
-    if (user.rank or 0) > config.RankIndex.COLONEL:
+    if (user.rank or 0) >= config.RankIndex.COLONEL:
         return True
 
     if user.division not in division_ids:
