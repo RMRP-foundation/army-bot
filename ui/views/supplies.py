@@ -69,7 +69,7 @@ async def handle_approve(interaction: discord.Interaction, req: SupplyRequest):
     target_user = await User.find_one(User.discord_id == req.user_id)
 
     if target_user.last_supply_at:
-        cooldown_time = target_user.last_supply_at + datetime.timedelta(hours=3)
+        cooldown_time = target_user.last_supply_at + datetime.timedelta(hours=6)
         if datetime.datetime.now() < cooldown_time:
             remaining = cooldown_time - datetime.datetime.now()
             hours, remainder = divmod(int(remaining.total_seconds()), 3600)

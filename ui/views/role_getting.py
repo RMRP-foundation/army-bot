@@ -246,7 +246,7 @@ class ApproveRoleButton(
                 RoleType.ARMY: "Младший лейтенант",
                 RoleType.KMB: "Младший лейтенант",
                 RoleType.SUPPLY_ACCESS: "Подполковник",
-                RoleType.GOV_EMPLOYEE: "Полковник",
+                RoleType.GOV_EMPLOYEE: "Подполковник",
             }
             required = role_names.get(request.role_type, "Полковник")
             await interaction.response.send_message(
@@ -449,7 +449,7 @@ class RejectRoleButton(
                 RoleType.ARMY: "Младший лейтенант",
                 RoleType.KMB: "Младший лейтенант",
                 RoleType.SUPPLY_ACCESS: "Подполковник",
-                RoleType.GOV_EMPLOYEE: "Полковник",
+                RoleType.GOV_EMPLOYEE: "Подполковник",
             }
             required = role_names.get(request.role_type, "Полковник")
             await interaction.response.send_message(
