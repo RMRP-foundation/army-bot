@@ -324,7 +324,7 @@ class SupplyBuilderView(discord.ui.View):
             target_user = await get_initiator(interaction)
 
             if target_user.last_supply_at:
-                cooldown_time = target_user.last_supply_at + datetime.timedelta(hours=3)
+                cooldown_time = target_user.last_supply_at + datetime.timedelta(hours=6)
                 if datetime.datetime.now() < cooldown_time:
                     remaining = cooldown_time - datetime.datetime.now()
                     hours, remainder = divmod(int(remaining.total_seconds()), 3600)
