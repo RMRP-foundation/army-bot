@@ -12,11 +12,11 @@ from .reinstatement import (
     ReinstatementRankSelect,
     RejectReinstatementButton,
 )
-from .role_getting import ApproveRoleButton, RejectRoleButton, RoleApplyView
+from .role_getting import RoleApplyView, RoleManagementButton
 from .sso_patrol import SSOPatrolApplyView, SSOPatrolManagementButton
 from .supplies import SupplyCreateView, SupplyManageButton
 from .supplies_audit import SupplyAuditView
-from .timeoff import TimeoffApplyView, ApproveTimeoffButton, RejectTimeoffButton, TimeoffCancelButton
+from .timeoff import TimeoffApplyView, TimeoffCancelButton, TimeoffManagementButton
 from .transfers import (
     ApproveTransferButton,
     OldApproveButton,
@@ -47,8 +47,7 @@ def load_buttons(bot):
         ApproveReinstatementButton,
         ReinstatementRankSelect,
         RejectReinstatementButton,
-        ApproveRoleButton,
-        RejectRoleButton,
+        RoleManagementButton,
         SupplyManageButton,
         DismissalManagementButton,
         DismissalCancelButton,
@@ -56,8 +55,7 @@ def load_buttons(bot):
         ApproveTransferButton,
         RejectTransferButton,
         OldApproveButton,
-        ApproveTimeoffButton,
-        RejectTimeoffButton,
+        TimeoffManagementButton,
         TimeoffCancelButton,
         SSOPatrolManagementButton,
         LogisticsManagementButton,

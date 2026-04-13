@@ -10,8 +10,6 @@ from utils.user_data import get_initiator
 
 MSK = datetime.timezone(datetime.timedelta(hours=3))
 
-closed_requests = set()
-
 
 class SSOPatrolManagementButton(discord.ui.DynamicItem[discord.ui.Button],
                                 template=r"sso_mng:(?P<action>\w+):(?P<id>\d+)"):
@@ -33,8 +31,9 @@ class SSOPatrolManagementButton(discord.ui.DynamicItem[discord.ui.Button],
         return cls(match.group("action"), int(match.group("id")))
 
     async def callback(self, interaction: discord.Interaction):
-        if self.request_id in closed_requests:
-            return await interaction.response.send_message("### ❌ Ошибка\nЗаявка уже обрабатывается.", ephemeral=True)
+        from utils.mongo_lock import try_lock
+        if not await try_lock(SSOPatrolRequest, self.request_id, "status", "PROCESSING", "PENDING"):
+            return await interaction.response.send_message("### ❌ Заявление уже обработано.", ephemeral=True)
 
         user = await get_initiator(interaction)
         div_info = divisions.get_division(user.division) if user else None
@@ -42,15 +41,13 @@ class SSOPatrolManagementButton(discord.ui.DynamicItem[discord.ui.Button],
         is_sso = div_info and div_info.abbreviation == "ССО"
         is_staff = await is_high_command(interaction.user.id)
         if not user or not (is_sso or is_staff):
+            await SSOPatrolRequest.get_pymongo_collection().update_one(
+                {"_id": self.request_id}, {"$set": {"status": "PENDING"}}
+            )
             return await interaction.response.send_message(
                 "### ❌ Ошибка доступа\nРассматривать заявления могут только сотрудники ССО.", ephemeral=True)
 
-        closed_requests.add(self.request_id)
-
         req = await SSOPatrolRequest.find_one(SSOPatrolRequest.id == self.request_id)
-        if not req or req.status != "PENDING":
-            closed_requests.discard(self.request_id)
-            return await interaction.response.send_message("### ❌ Заявление уже обработано.", ephemeral=True)
 
         req.status = "APPROVED" if self.action == "approve" else "REJECTED"
         req.reviewer_id = interaction.user.id
@@ -64,7 +61,6 @@ class SSOPatrolManagementButton(discord.ui.DynamicItem[discord.ui.Button],
             embed=await req.to_embed(interaction.client),
             view=indicator_view(f"{status_text} {interaction.user.display_name}", emoji=final_emoji)
         )
-        closed_requests.discard(self.request_id)
 
 
 class SSOPatrolApplyView(discord.ui.LayoutView):

@@ -8,7 +8,7 @@ from pymongo import UpdateOne
 import config
 from database import divisions
 from database.connection import establish_db_connection
-from database.models import User
+from database.models import User, TimeoffRequest, RoleRequest
 from error_handling import _custom_view_on_error, on_tree_error, on_command_error
 from ui.views import load_buttons
 from utils.audit import audit_logger
@@ -56,11 +56,35 @@ class Bot(commands.Bot):
             await User.get_pymongo_collection().bulk_write(operations, ordered=False)
             logger.info(f"Synchronized {len(operations)} users from guild members")
 
+    async def run_migrations(self):
+        await RoleRequest.get_pymongo_collection().update_many(
+            {"checked": True, "status": {"$exists": False}},
+            [{"$set": {"status": {"$cond": ["$approved", "APPROVED", "REJECTED"]}}}]
+        )
+        await TimeoffRequest.get_pymongo_collection().update_many(
+            {"checked": True, "status": {"$exists": False}},
+            [{"$set": {"status": {"$cond": ["$approved", "APPROVED", "REJECTED"]}}}]
+        )
+
+    async def reset_processing(self):
+        """Сбрасывает PROCESSING -> PENDING при каждом старте."""
+        from database.models import DismissalRequest, SSOPatrolRequest, LogisticsRequest, LeaveRequest, TransferRequest
+        for model in [
+            DismissalRequest, SSOPatrolRequest, LogisticsRequest,
+            LeaveRequest, RoleRequest, TimeoffRequest, TransferRequest
+        ]:
+            await model.get_pymongo_collection().update_many(
+                {"status": "PROCESSING"},
+                {"$set": {"status": "PENDING"}}
+            )
+
     async def on_ready(self):
         print("done")
         logger.info(f"Logged in as {self.user} (ID: {self.user.id})")
         logger.info("------")
         await self._sync_users()
+        await self.run_migrations()
+        await self.reset_processing()
         from cogs.leave import restore_leave_timers
         await restore_leave_timers(self)
 

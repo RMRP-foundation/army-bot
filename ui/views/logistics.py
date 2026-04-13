@@ -3,13 +3,12 @@ import discord
 from discord.ui import Separator
 
 import config
-from database.models import LogisticsRequest, LogisticsType, User
+from database.models import LogisticsRequest, LogisticsType, User, SupplyRequest
 from texts import logistics_description
 from ui.views.indicators import indicator_view
 from utils.permissions import is_high_command
 from utils.user_data import get_initiator
 
-closed_requests = set()
 
 class LogisticsApplyView(discord.ui.LayoutView):
     def __init__(self):
@@ -61,23 +60,22 @@ class LogisticsManagementButton(discord.ui.DynamicItem[discord.ui.Button],
         return cls(match.group("act"), int(match.group("id")))
 
     async def callback(self, interaction: discord.Interaction):
-        if self.request_id in closed_requests:
+        from utils.mongo_lock import try_lock
+        if not await try_lock(LogisticsRequest, self.request_id, "status", "PROCESSING", "PENDING"):
             return await interaction.response.send_message("❌ Запрос уже обработан.", ephemeral=True)
-
-        closed_requests.add(self.request_id)
 
         is_supplier =any(r.id == config.RoleId.SUPPLIER.value for r in interaction.user.roles)
         is_staff = await is_high_command(interaction.user.id)
         if not is_supplier and not is_staff:
-            closed_requests.discard(self.request_id)
+            await LogisticsRequest.get_pymongo_collection().update_one(
+                {"_id": self.request_id}, {"$set": {"status": "PENDING"}}
+            )
             return await interaction.response.send_message(
                 "❌ У вас нет прав поставщика для этого действия.",
                 ephemeral=True
             )
 
         req = await LogisticsRequest.find_one(LogisticsRequest.id == self.request_id)
-        if not req or req.status != "PENDING":
-            return await interaction.response.send_message("❌ Запрос уже неактивен.", ephemeral=True)
 
         req.status = "APPROVED" if self.action == "approve" else "REJECTED"
         req.reviewer_name = interaction.user.display_name

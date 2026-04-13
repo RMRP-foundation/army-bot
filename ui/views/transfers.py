@@ -148,6 +148,10 @@ class OldApproveButton(
         return cls(request_id, division_id)
 
     async def callback(self, interaction: Interaction[ClientT]) -> Any:
+        from utils.mongo_lock import try_lock
+        if not await try_lock(TransferRequest, self.request_id, "status", "PROCESSING", "OLD_DIVISION_REVIEW"):
+            return await interaction.response.send_message("❌ Запрос уже обрабатывается.", ephemeral=True)
+
         request = await TransferRequest.find_one(TransferRequest.id == self.request_id)
         if not request:
             await interaction.response.send_message("Запрос не найден.", ephemeral=True)
@@ -156,6 +160,10 @@ class OldApproveButton(
         officer = await get_initiator(interaction)
 
         if not can_user_handle_transfer(officer, [request.old_division_id]):
+            await TransferRequest.get_pymongo_collection().update_one(
+                {"_id": self.request_id}, {"$set": {"status": "OLD_DIVISION_REVIEW"}}
+            )
+
             await interaction.response.send_message(
                 "У вас нет прав взаимодействовать с этой кнопкой.", ephemeral=True
             )
@@ -222,6 +230,10 @@ class ApproveTransferButton(
         return cls(request_id, div_id)
 
     async def callback(self, interaction: Interaction[ClientT]) -> Any:
+        from utils.mongo_lock import try_lock
+        if not await try_lock(TransferRequest, self.request_id, "status", "PROCESSING", "NEW_DIVISION_REVIEW"):
+            return await interaction.response.send_message("❌ Запрос уже обрабатывается.", ephemeral=True)
+
         request = await TransferRequest.find_one(TransferRequest.id == self.request_id)
         if not request:
             await interaction.response.send_message("Запрос не найден.", ephemeral=True)
@@ -229,6 +241,10 @@ class ApproveTransferButton(
 
         officer = await get_initiator(interaction)
         if not can_user_handle_transfer(officer, [request.new_division_id]):
+            await TransferRequest.get_pymongo_collection().update_one(
+                {"_id": self.request_id}, {"$set": {"status": "NEW_DIVISION_REVIEW"}}
+            )
+
             await interaction.response.send_message(
                 "У вас нет прав взаимодействовать с этой кнопкой.", ephemeral=True
             )
@@ -308,11 +324,21 @@ class RejectTransferButton(
             await interaction.response.send_message("Запрос не найден.", ephemeral=True)
             return
 
+        old_status = request.status
+
+        from utils.mongo_lock import try_lock
+        if not await try_lock(TransferRequest, self.request_id, "status", "PROCESSING", old_status):
+            return await interaction.response.send_message("❌ Запрос уже обрабатывается.", ephemeral=True)
+
         officer = await get_initiator(interaction)
 
         if not can_user_handle_transfer(
             officer, [request.old_division_id, request.new_division_id]
         ):
+            await TransferRequest.get_pymongo_collection().update_one(
+                {"_id": self.request_id}, {"$set": {"status": old_status}}
+            )
+
             await interaction.response.send_message(
                 "У вас нет прав взаимодействовать с этой кнопкой.", ephemeral=True
             )

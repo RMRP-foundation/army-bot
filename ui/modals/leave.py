@@ -93,4 +93,4 @@ class LeaveRequestModal(discord.ui.Modal):
         await request.save()
 
         from cogs.leave import update_bottom_message
-        await update_bottom_message(interaction.client, "ic_leave" if self.leave_type == LeaveType.IC else "ooc_leave")
+        await update_bottom_message(interaction.client, self.leave_type)

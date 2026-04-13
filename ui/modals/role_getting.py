@@ -13,7 +13,7 @@ from ui.modals.labels import (
     name_component,
     static_label,
 )
-from ui.views.role_getting import ApproveRoleButton, RejectRoleButton
+from ui.views.role_getting import RoleManagementButton
 from utils.user_data import formatted_static_to_int
 
 
@@ -32,7 +32,7 @@ class RoleRequestModal(discord.ui.Modal, title="Заявление на полу
     async def on_submit(self, interaction: discord.Interaction):
         opened_request = await RoleRequest.find_one(
             RoleRequest.user == interaction.user.id,
-            RoleRequest.checked == False,  # noqa: E712
+            RoleRequest.status == "PENDING",  # noqa: E712
         )
         if opened_request is not None:
             await interaction.response.send_message(
@@ -75,8 +75,8 @@ class RoleRequestModal(discord.ui.Modal, title="Заявление на полу
         await request.create()
 
         view = discord.ui.View(timeout=None)
-        view.add_item(ApproveRoleButton(request_id=request.id))
-        view.add_item(RejectRoleButton(request_id=request.id))
+        view.add_item(RoleManagementButton("approve", request.id))
+        view.add_item(RoleManagementButton("reject", request.id))
         await interaction.channel.send(
             content=f"-# ||<@{interaction.user.id}>||",
             embed=await request.to_embed(),
@@ -103,7 +103,7 @@ class KMBRequestModal(discord.ui.Modal, title="Заявление на КМБ"):
     async def on_submit(self, interaction: discord.Interaction):
         opened_request = await RoleRequest.find_one(
             RoleRequest.user == interaction.user.id,
-            RoleRequest.checked == False,  # noqa: E712
+            RoleRequest.status == "PENDING",  # noqa: E712
         )
         if opened_request is not None:
             await interaction.response.send_message(
@@ -150,8 +150,8 @@ class KMBRequestModal(discord.ui.Modal, title="Заявление на КМБ"):
         await request.create()
 
         view = discord.ui.View(timeout=None)
-        view.add_item(ApproveRoleButton(request_id=request.id))
-        view.add_item(RejectRoleButton(request_id=request.id))
+        view.add_item(RoleManagementButton("approve", request.id))
+        view.add_item(RoleManagementButton("reject", request.id))
 
         await interaction.channel.send(
             content=f"-# ||<@{interaction.user.id}>||",
@@ -193,7 +193,7 @@ class SupplyAccessModal(discord.ui.Modal, title="Заявление на дос�
     async def on_submit(self, interaction: discord.Interaction):
         opened_request = await RoleRequest.find_one(
             RoleRequest.user == interaction.user.id,
-            RoleRequest.checked == False,  # noqa: E712
+            RoleRequest.status == "PENDING",  # noqa: E712
         )
         if opened_request is not None:
             await interaction.response.send_message(
@@ -242,8 +242,8 @@ class SupplyAccessModal(discord.ui.Modal, title="Заявление на дос�
         )
 
         view = discord.ui.View(timeout=None)
-        view.add_item(ApproveRoleButton(request_id=request.id))
-        view.add_item(RejectRoleButton(request_id=request.id))
+        view.add_item(RoleManagementButton("approve", request.id))
+        view.add_item(RoleManagementButton("reject", request.id))
         await interaction.channel.send(
             content=f"-# ||<@{interaction.user.id}> {colonel_mentions}||",
             embed=await request.to_embed(),
@@ -285,7 +285,7 @@ class GovEmployeeModal(discord.ui.Modal, title="Заявление на роль
     async def on_submit(self, interaction: discord.Interaction):
         opened_request = await RoleRequest.find_one(
             RoleRequest.user == interaction.user.id,
-            RoleRequest.checked == False,  # noqa: E712
+            RoleRequest.status == "PENDING",  # noqa: E712
         )
         if opened_request is not None:
             await interaction.response.send_message(
@@ -331,8 +331,8 @@ class GovEmployeeModal(discord.ui.Modal, title="Заявление на роль
         )
 
         view = discord.ui.View(timeout=None)
-        view.add_item(ApproveRoleButton(request_id=request.id))
-        view.add_item(RejectRoleButton(request_id=request.id))
+        view.add_item(RoleManagementButton("approve", request.id))
+        view.add_item(RoleManagementButton("reject", request.id))
         await interaction.channel.send(
             content=f"-# ||<@{interaction.user.id}> {colonel_mentions}||",
             embed=await request.to_embed(),

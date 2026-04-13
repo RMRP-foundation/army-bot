@@ -118,6 +118,13 @@ async def restore_leave_timers(bot: Bot):
 
     _timers_restored = True
 
+async def update_bottom_message(bot: Bot, leave_type: LeaveType):
+    """Обновляет сообщение для подачи заявки в зависимости от типа отпуска."""
+    if leave_type == LeaveType.IC:
+        await _update_bottom_message(bot, ic_channel_id, ICLeaveApplyView())
+    else:
+        await _update_bottom_message(bot, ooc_channel_id, OOCLeaveApplyView())
+
 
 class Leave(commands.Cog):
     def __init__(self, bot: Bot):
@@ -127,9 +134,9 @@ class Leave(commands.Cog):
     @has_update_permission()
     async def refresh_leave(self, ctx: commands.Context):
         if ctx.channel.id == ic_channel_id:
-            await _update_bottom_message(self.bot, ic_channel_id, ICLeaveApplyView())
+            await update_bottom_message(self.bot, LeaveType.IC)
         elif ctx.channel.id == ooc_channel_id:
-            await _update_bottom_message(self.bot, ooc_channel_id, OOCLeaveApplyView())
+            await update_bottom_message(self.bot, LeaveType.OOC)
 
 
 async def setup(bot: Bot):

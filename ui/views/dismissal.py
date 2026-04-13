@@ -15,8 +15,6 @@ from utils.user_data import format_game_id, get_initiator
 
 logger = logging.getLogger(__name__)
 
-closed_requests = set()
-
 
 async def open_modal(interaction: discord.Interaction, d_type: DismissalType):
     user_db = await get_initiator(interaction)
@@ -126,27 +124,32 @@ class DismissalManagementButton(
     async def callback(self, interaction: discord.Interaction):
         officer = await get_initiator(interaction)
         if not officer or (officer.rank or 0) < config.CAPTAIN_RANK_INDEX:
+            await DismissalRequest.get_pymongo_collection().update_one(
+                {"_id": self.request_id}, {"$set": {"status": "PENDING"}}
+            )
             await interaction.response.send_message(
                 "❌ Доступно со звания Капитан.", ephemeral=True
             )
             return
 
-        req = await DismissalRequest.find_one(DismissalRequest.id == self.request_id)
-        if not req or req.status != "PENDING" or self.request_id in closed_requests:
+        from utils.mongo_lock import try_lock
+        if not await try_lock(DismissalRequest, self.request_id, "status", "PROCESSING", "PENDING"):
             await interaction.response.send_message(
                 "❌ Заявка не найдена или уже обработана.", ephemeral=True
             )
             return
+        req = await DismissalRequest.find_one(DismissalRequest.id == self.request_id)
 
-        if (req.rank_index or 0) <= officer.rank:
+        if (req.rank_index or 0) >= officer.rank:
+            await DismissalRequest.get_pymongo_collection().update_one(
+                {"_id": self.request_id}, {"$set": {"status": "PENDING"}}
+            )
             await interaction.response.send_message(
                 "❌ Вы не можете увольнять пользователей "
                 "равного или старшего звания.",
                 ephemeral=True,
             )
             return
-
-        closed_requests.add(self.request_id)
 
         if self.action == "reject":
             req.status = "REJECTED"
@@ -168,14 +171,12 @@ class DismissalManagementButton(
         if self.action == "approve":
             target_user_db = await User.find_one(User.discord_id == req.user_id)
             if not target_user_db:
-                closed_requests.discard(self.request_id)
                 await interaction.response.send_message(
                     "❌ Пользователь не найден в БД.", ephemeral=True
                 )
                 return
 
             if (officer.rank or 0) <= (target_user_db.rank or 0):
-                closed_requests.discard(self.request_id)
                 await interaction.response.send_message(
                     "❌ Вы не можете уволить этого пользователя, так как его "
                     "звание выше или равно вашему.",

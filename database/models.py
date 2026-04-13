@@ -192,8 +192,7 @@ class RoleRequest(Document):
     role_type: RoleType = RoleType.ARMY
     data: RoleData | None = None
     extended_data: ExtendedRoleData | None = None
-    approved: bool = False
-    checked: bool = False
+    status: str = "PENDING"
     sent_at: datetime.datetime = Field(default_factory=datetime.datetime.now)
 
     def _get_role_type_name(self) -> str:
@@ -206,21 +205,13 @@ class RoleRequest(Document):
         return names.get(self.role_type, "Неизвестно")
 
     async def to_embed(self):
-        status = (
-            "одобрено"
-            if self.approved
-            else "отклонено"
-            if self.checked
-            else "на рассмотрении"
-        )
-        emoji = "✅" if self.approved else "❌" if self.checked else "⏳"
-        colour = (
-            discord.Colour.dark_green()
-            if self.approved
-            else discord.Colour.dark_red()
-            if self.checked
-            else discord.Colour.gold()
-        )
+        status_map = {
+            "PENDING": ("⏳", discord.Colour.gold(), "на рассмотрении"),
+            "PROCESSING": ("⏳", discord.Colour.gold(), "на рассмотрении"),
+            "APPROVED": ("✅", discord.Colour.dark_green(), "одобрено"),
+            "REJECTED": ("❌", discord.Colour.dark_red(), "отклонено"),
+        }
+        emoji, colour, status = status_map.get(self.status, ("❓", discord.Colour.default(), "неизвестно"))
 
         role_name = self._get_role_type_name()
         e = discord.Embed(
@@ -266,21 +257,19 @@ class TimeoffRequest(Document):
     id: int
     user_id: int
     data: RoleData
-    approved: bool = False
-    checked: bool = False
+    status: str = "PENDING"
     period: str | None = None
     sent_at: datetime.datetime = Field(default_factory=datetime.datetime.now)
     reviewed_at: datetime.datetime | None = None
 
     async def to_embed(self):
-        emoji = "✅" if self.approved else "❌" if self.checked else "⏳"
-        colour = (
-            discord.Colour.dark_green()
-            if self.approved
-            else discord.Colour.dark_red()
-            if self.checked
-            else discord.Colour.gold()
-        )
+        status_map = {
+            "PENDING": ("⏳", discord.Colour.gold()),
+            "PROCESSING": ("⏳", discord.Colour.gold()),
+            "APPROVED": ("✅", discord.Colour.dark_green()),
+            "REJECTED": ("❌", discord.Colour.dark_red()),
+        }
+        emoji, colour = status_map.get(self.status, ("❓", discord.Colour.default()))
 
         e = discord.Embed(
             title=f"{emoji} Заявление на отгул #{self.id}",

@@ -20,8 +20,6 @@ from utils.user_data import get_initiator
 
 MSK = datetime.timezone(datetime.timedelta(hours=3))
 
-closed_requests: set[int] = set()
-
 
 async def _apply_leave_nick_and_role(
         bot, member: discord.Member, user_db: User, leave_type: LeaveType
@@ -266,6 +264,9 @@ class LeaveManagementButton(
     async def _handle_approve(self, interaction: discord.Interaction, request: LeaveRequest):
         is_ok, error = await self._check_officer(interaction, request)
         if not is_ok:
+            await LeaveRequest.get_pymongo_collection().update_one(
+                {"_id": self.request_id}, {"$set": {"status": "PENDING"}}
+            )
             await interaction.response.send_message(error, ephemeral=True)
             return
 
@@ -314,6 +315,9 @@ class LeaveManagementButton(
     async def _handle_reject(self, interaction: discord.Interaction, request: LeaveRequest):
         is_ok, err = await self._check_officer(interaction, request)
         if not is_ok:
+            await LeaveRequest.get_pymongo_collection().update_one(
+                {"_id": self.request_id}, {"$set": {"status": "PENDING"}}
+            )
             await interaction.response.send_message(err, ephemeral=True)
             return
 
@@ -335,6 +339,9 @@ class LeaveManagementButton(
         if not is_own:
             is_ok, err = await self._check_officer(interaction, request)
             if not is_ok:
+                await LeaveRequest.get_pymongo_collection().update_one(
+                    {"_id": self.request_id}, {"$set": {"status": "APPROVED"}}
+                )
                 await interaction.response.send_message(err, ephemeral=True)
                 return
 
@@ -371,6 +378,9 @@ class LeaveManagementButton(
     async def _handle_cancel(self, interaction: discord.Interaction, request: LeaveRequest):
         """Отмена нерассмотренного заявления. Только сам пользователь."""
         if interaction.user.id != request.user_id:
+            await LeaveRequest.get_pymongo_collection().update_one(
+                {"_id": self.request_id}, {"$set": {"status": "PENDING"}}
+            )
             await interaction.response.send_message(
                 "❌ Отменить заявление может только его автор.", ephemeral=True
             )
@@ -402,26 +412,25 @@ class LeaveManagementButton(
             )
             return
 
-        if self.action in ("approve", "reject", "annul"):
-            if self.request_id in closed_requests:
-                await interaction.response.send_message(
-                    "❌ Заявка уже обрабатывается.", ephemeral=True
-                )
+        from utils.mongo_lock import try_lock
+        if self.action in ("approve", "reject", "cancel"):
+            if not await try_lock(LeaveRequest, self.request_id, "status", "PROCESSING", "PENDING"):
+                await interaction.response.send_message("❌ Заявка уже обрабатывается.", ephemeral=True)
                 return
-            closed_requests.add(self.request_id)
+        elif self.action == "annul":
+            if not await try_lock(LeaveRequest, self.request_id, "status", "PROCESSING", "APPROVED"):
+                await interaction.response.send_message("❌ Заявка уже обрабатывается.", ephemeral=True)
+                return
 
-        try:
-            match self.action:
-                case "approve":
-                    await self._handle_approve(interaction, request)
-                case "reject":
-                    await self._handle_reject(interaction, request)
-                case "annul":
-                    await self._handle_annul(interaction, request)
-                case "cancel":
-                    await self._handle_cancel(interaction, request)
-        finally:
-            closed_requests.discard(self.request_id)
+        match self.action:
+            case "approve":
+                await self._handle_approve(interaction, request)
+            case "reject":
+                await self._handle_reject(interaction, request)
+            case "annul":
+                await self._handle_annul(interaction, request)
+            case "cancel":
+                await self._handle_cancel(interaction, request)
 
 
 class LeaveManagementView(discord.ui.View):
