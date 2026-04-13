@@ -327,7 +327,8 @@ class RejectTransferButton(
         old_status = request.status
 
         from utils.mongo_lock import try_lock
-        if not await try_lock(TransferRequest, self.request_id, "status", "PROCESSING", old_status):
+        if (old_status == "PROCESSING"
+                or not await try_lock(TransferRequest, self.request_id, "status", "PROCESSING", old_status)):
             return await interaction.response.send_message("❌ Запрос уже обрабатывается.", ephemeral=True)
 
         officer = await get_initiator(interaction)

@@ -69,14 +69,32 @@ class Bot(commands.Bot):
     async def reset_processing(self):
         """Сбрасывает PROCESSING -> PENDING при каждом старте."""
         from database.models import DismissalRequest, SSOPatrolRequest, LogisticsRequest, LeaveRequest, TransferRequest
-        for model in [
-            DismissalRequest, SSOPatrolRequest, LogisticsRequest,
-            LeaveRequest, RoleRequest, TimeoffRequest, TransferRequest
-        ]:
+        simple_models = [
+            DismissalRequest, SSOPatrolRequest, LogisticsRequest, RoleRequest, TimeoffRequest, LeaveRequest
+        ]
+        for model in simple_models:
             await model.get_pymongo_collection().update_many(
                 {"status": "PROCESSING"},
                 {"$set": {"status": "PENDING"}}
             )
+
+        div_with_positions = [d.division_id for d in divisions.divisions if d.positions]
+
+        await TransferRequest.get_pymongo_collection().update_many(
+            {
+                "status": "PROCESSING",
+                "$or": [
+                    {"old_reviewer_id": {"$ne": None}},
+                    {"old_division_id": {"$nin": div_with_positions}}
+                ]
+            },
+            {"$set": {"status": "NEW_DIVISION_REVIEW"}}
+        )
+
+        await TransferRequest.get_pymongo_collection().update_many(
+            {"status": "PROCESSING"},
+            {"$set": {"status": "OLD_DIVISION_REVIEW"}}
+        )
 
     async def on_ready(self):
         print("done")

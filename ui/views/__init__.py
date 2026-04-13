@@ -12,11 +12,11 @@ from .reinstatement import (
     ReinstatementRankSelect,
     RejectReinstatementButton,
 )
-from .role_getting import RoleApplyView, RoleManagementButton
+from .role_getting import RoleApplyView, RoleManagementButton, RoleLegacyButton
 from .sso_patrol import SSOPatrolApplyView, SSOPatrolManagementButton
 from .supplies import SupplyCreateView, SupplyManageButton
 from .supplies_audit import SupplyAuditView
-from .timeoff import TimeoffApplyView, TimeoffCancelButton, TimeoffManagementButton
+from .timeoff import TimeoffApplyView, TimeoffCancelButton, TimeoffManagementButton, TimeoffLegacyButton
 from .transfers import (
     ApproveTransferButton,
     OldApproveButton,
@@ -60,5 +60,7 @@ def load_buttons(bot):
         SSOPatrolManagementButton,
         LogisticsManagementButton,
         LeaveManagementButton,
+        RoleLegacyButton,  # Временная
+        TimeoffLegacyButton,  # Временная
     )
     load_persistent_views(bot)

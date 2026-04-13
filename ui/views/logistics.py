@@ -3,11 +3,10 @@ import discord
 from discord.ui import Separator
 
 import config
-from database.models import LogisticsRequest, LogisticsType, User, SupplyRequest
+from database.models import LogisticsRequest, LogisticsType, User
 from texts import logistics_description
 from ui.views.indicators import indicator_view
 from utils.permissions import is_high_command
-from utils.user_data import get_initiator
 
 
 class LogisticsApplyView(discord.ui.LayoutView):

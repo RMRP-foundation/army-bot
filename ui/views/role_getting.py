@@ -4,6 +4,7 @@ import re
 from typing import Any
 
 import discord
+from beanie.odm.operators.find.comparison import In
 from discord import Interaction, InteractionResponse
 from discord._types import ClientT
 
@@ -37,7 +38,7 @@ ROLE_REQUIRED_RANKS = {
 async def _check_can_apply(interaction: discord.Interaction, check_blacklist: bool = False) -> bool:
     opened_request = await RoleRequest.find_one(
         RoleRequest.user == interaction.user.id,
-        RoleRequest.status == "PENDING",
+        In(RoleRequest.status, ["PENDING", "PROCESSING"])
     )
     if opened_request is not None:
         await interaction.response.send_message(
@@ -286,3 +287,19 @@ class RoleManagementView(discord.ui.View):
         super().__init__(timeout=None)
         self.add_item(RoleManagementButton("approve", request_id))
         self.add_item(RoleManagementButton("reject", request_id))
+
+
+class RoleLegacyButton(discord.ui.DynamicItem[discord.ui.Button], template=r"(?P<action>approve|reject)_role:(?P<id>\d+)"):
+    def __init__(self, action: str, request_id: int):
+        super().__init__(discord.ui.Button(custom_id=f"{action}_role:{request_id}"))
+        self.action = action
+        self.request_id = request_id
+
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match):
+        return cls(match.group("action"), int(match.group("id")))
+
+    async def callback(self, interaction: discord.Interaction):
+        # Просто перенаправляем в новую универсальную кнопку
+        new_button = RoleManagementButton(self.action, self.request_id)
+        await new_button.callback(interaction)

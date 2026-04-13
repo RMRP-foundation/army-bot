@@ -3,6 +3,7 @@ import re
 from typing import Any
 
 import discord
+from beanie.odm.operators.find.comparison import In
 from discord import Interaction, InteractionResponse
 from discord._types import ClientT
 
@@ -20,7 +21,7 @@ MSK = datetime.timezone(datetime.timedelta(hours=3))
 async def _check_can_apply(interaction: discord.Interaction) -> bool:
     opened_request = await TimeoffRequest.find_one(
         TimeoffRequest.user_id == interaction.user.id,
-        TimeoffRequest.status == "PENDING",
+        In(TimeoffRequest.status, ["PENDING", "PROCESSING"])
     )
     if opened_request is not None:
         await interaction.response.send_message(
@@ -212,3 +213,19 @@ class TimeoffManagementView(discord.ui.View):
         self.add_item(TimeoffManagementButton("approve", request_id))
         self.add_item(TimeoffManagementButton("reject", request_id))
         self.add_item(TimeoffCancelButton(request_id))
+
+
+class TimeoffLegacyButton(discord.ui.DynamicItem[discord.ui.Button], template=r"(?P<action>approve|reject)_timeoff:(?P<id>\d+)"):
+    def __init__(self, action: str, request_id: int):
+        super().__init__(discord.ui.Button(custom_id=f"{action}_timeoff:{request_id}"))
+        self.action = action
+        self.request_id = request_id
+
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match):
+        return cls(match.group("action"), int(match.group("id")))
+
+    async def callback(self, interaction: discord.Interaction):
+        # Перенаправляем в новую логику
+        new_button = TimeoffManagementButton(self.action, self.request_id)
+        await new_button.callback(interaction)

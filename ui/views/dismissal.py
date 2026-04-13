@@ -122,6 +122,13 @@ class DismissalManagementButton(
         return cls(match.group("action"), int(match.group("id")))
 
     async def callback(self, interaction: discord.Interaction):
+        from utils.mongo_lock import try_lock
+        if not await try_lock(DismissalRequest, self.request_id, "status", "PROCESSING", "PENDING"):
+            await interaction.response.send_message(
+                "❌ Заявка не найдена или уже обработана.", ephemeral=True
+            )
+            return
+
         officer = await get_initiator(interaction)
         if not officer or (officer.rank or 0) < config.CAPTAIN_RANK_INDEX:
             await DismissalRequest.get_pymongo_collection().update_one(
@@ -132,12 +139,6 @@ class DismissalManagementButton(
             )
             return
 
-        from utils.mongo_lock import try_lock
-        if not await try_lock(DismissalRequest, self.request_id, "status", "PROCESSING", "PENDING"):
-            await interaction.response.send_message(
-                "❌ Заявка не найдена или уже обработана.", ephemeral=True
-            )
-            return
         req = await DismissalRequest.find_one(DismissalRequest.id == self.request_id)
 
         if (req.rank_index or 0) >= officer.rank:
@@ -198,7 +199,7 @@ class DismissalManagementButton(
                 req.user_id,
                 additional_info={
                     "Причина": f"[Рапорт на увольнение #{req.id}]"
-                    f"({interaction.message.jump_url})"
+                               f"({interaction.message.jump_url})"
                 },
             )
 
@@ -221,8 +222,8 @@ class DismissalManagementButton(
                     new_roles = [
                         role for role in target_member.roles
                         if role.is_default()
-                        or role.id in excluded
-                        or not role.is_assignable()
+                           or role.id in excluded
+                           or not role.is_assignable()
                     ]
 
                     prefix = "Уволен | "
