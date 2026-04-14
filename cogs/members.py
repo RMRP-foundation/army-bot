@@ -15,8 +15,9 @@ logger = logging.getLogger(__name__)
 
 
 class MembersBrowser(discord.ui.LayoutView):
-    def __init__(self, members: list[tuple[int, User]], division_info, members_per_page: int = 25):
+    def __init__(self, guild: discord.Guild, members: list[tuple[int, User]], division_info, members_per_page: int = 25):
         super().__init__(timeout=300)
+        self.guild = guild
         self.members = members
         self.division_info = division_info
         self.per_page = members_per_page
@@ -40,7 +41,7 @@ class MembersBrowser(discord.ui.LayoutView):
         members_text = "\n".join([
             f"{i}. {RANK_EMOJIS[u.rank or 0]} "
             f"`{format_game_id(u.static) if u.static else 'N // A'}` "
-            f"<@{u.discord_id}> "
+            f"<@{u.discord_id}>{' ⚠️' if not self.guild.get_member(u.discord_id) else ''} "
             f"❯ {u.full_name or 'Без имени'} "
             f"❯ {u.position or 'Без должности'}"
             for i, u in current_slice
@@ -127,6 +128,10 @@ class Members(commands.Cog):
         interaction: discord.Interaction,
         division: app_commands.Choice[str] | None,
     ):
+        if not interaction.guild:
+            await interaction.response.send_message("Эту команду можно использовать только на сервере.", ephemeral=True)
+            return
+
         editor_db = await self._check_permissions(interaction)
         if not editor_db:
             return
@@ -153,7 +158,7 @@ class Members(commands.Cog):
                 await interaction.response.send_message(view=view, ephemeral=True)
                 return
 
-            browser_view = MembersBrowser(members_indexed, _NoDivisionInfo())
+            browser_view = MembersBrowser(interaction.guild, members_indexed, _NoDivisionInfo())
             await interaction.response.send_message(view=browser_view, ephemeral=True)
             return
 
@@ -199,7 +204,7 @@ class Members(commands.Cog):
             await interaction.response.send_message(view=view, ephemeral=True)
             return
 
-        browser_view = MembersBrowser(members_indexed, division_info)
+        browser_view = MembersBrowser(interaction.guild, members_indexed, division_info)
         await interaction.response.send_message(view=browser_view, ephemeral=True)
 
 
