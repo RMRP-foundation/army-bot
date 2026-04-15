@@ -172,16 +172,11 @@ class DismissalManagementButton(
         if self.action == "approve":
             target_user_db = await User.find_one(User.discord_id == req.user_id)
             if not target_user_db:
+                await DismissalRequest.get_pymongo_collection().update_one(
+                    {"_id": self.request_id}, {"$set": {"status": "PENDING"}}
+                )
                 await interaction.response.send_message(
                     "❌ Пользователь не найден в БД.", ephemeral=True
-                )
-                return
-
-            if (officer.rank or 0) <= (target_user_db.rank or 0):
-                await interaction.response.send_message(
-                    "❌ Вы не можете уволить этого пользователя, так как его "
-                    "звание выше или равно вашему.",
-                    ephemeral=True,
                 )
                 return
 

@@ -100,6 +100,13 @@ class TransferApply(
             return
 
         user = await get_initiator(interaction)
+        if not user or user.rank is None:
+            await interaction.response.send_message(
+                "❌ Вы не состоите на службе и не можете подать заявление.",
+                ephemeral=True,
+            )
+            return
+
         if user and user.division == self.division.division_id:
             await interaction.response.send_message(
                 f"### Вы уже состоите в подразделении "
@@ -327,8 +334,7 @@ class RejectTransferButton(
         old_status = request.status
 
         from utils.mongo_lock import try_lock
-        if (old_status == "PROCESSING"
-                or not await try_lock(TransferRequest, self.request_id, "status", "PROCESSING", old_status)):
+        if not await try_lock(TransferRequest, self.request_id, "status", "PROCESSING", ["OLD_DIVISION_REVIEW", "NEW_DIVISION_REVIEW"]):
             return await interaction.response.send_message("❌ Запрос уже обрабатывается.", ephemeral=True)
 
         officer = await get_initiator(interaction)
