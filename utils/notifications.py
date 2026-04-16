@@ -188,14 +188,29 @@ async def notify_timeoff_rejected(bot, user_id: int) -> bool:
 
 async def notify_leave_approved(bot, user_id: int, request) -> bool:
     """Уведомление об одобрении отпуска."""
+    import datetime as _dt
 
     type_label = "IC" if request.leave_type.value == "IC" else "OOC"
-    ends_at_fmt = discord.utils.format_dt(request.ends_at, style="d") if request.ends_at else "—"
+
+    def _to_utc(dt):
+        if dt is None:
+            return None
+        return dt.replace(tzinfo=_dt.timezone.utc) if dt.tzinfo is None else dt
+
+    starts_at_fmt = (
+        discord.utils.format_dt(_to_utc(request.starts_at), style="d")
+        if request.starts_at else "—"
+    )
+    ends_at_fmt = (
+        discord.utils.format_dt(_to_utc(request.ends_at), style="d")
+        if request.ends_at else "—"
+    )
 
     embed = discord.Embed(
         title="✅ Отпуск одобрен",
         description=(
             f"Ваш **{type_label}** отпуск одобрен.\n\n"
+            f"**Начинается:** {starts_at_fmt}\n"
             f"**Истекает:** {ends_at_fmt}"
         ),
         color=discord.Color.green(),

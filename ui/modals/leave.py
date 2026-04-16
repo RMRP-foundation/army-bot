@@ -8,8 +8,9 @@ from database.counters import get_next_id
 from database.models import LeaveRequest, LeaveType
 from utils.user_data import get_initiator
 
+MSK = datetime.timezone(datetime.timedelta(hours=3))
+
 DATEPARSER_SETTINGS = {
-    "PREFER_DAY_OF_MONTH": "first",
     "RETURN_AS_TIMEZONE_AWARE": True,
     "DATE_ORDER": "DMY",
     "PREFER_DATES_FROM": "future",
@@ -27,7 +28,6 @@ def parse_date(raw: str) -> datetime.date | None:
         date_formats=["%d.%m", "%d.%m.%Y", "%d/%m/%Y", "%d-%m-%Y"],
         settings=DATEPARSER_SETTINGS
     )
-    print(result)
     return result.date() if result else None
 
 class LeaveRequestModal(discord.ui.Modal):
@@ -85,7 +85,7 @@ class LeaveRequestModal(discord.ui.Modal):
             )
             return
 
-        days = (end_date - start_date).days
+        days = (end_date - start_date).days + 1
 
         if self.leave_type == LeaveType.IC:
             if not (1 <= days <= IC_MAX_DAYS):
@@ -106,8 +106,8 @@ class LeaveRequestModal(discord.ui.Modal):
             "✅ Заявление подаётся...", ephemeral=True
         )
 
-        start_dt = datetime.datetime.combine(start_date, datetime.time.min)
-        end_dt = datetime.datetime.combine(end_date, datetime.time.min)
+        start_dt = datetime.datetime.combine(start_date, datetime.time.min, tzinfo=MSK)
+        end_dt = datetime.datetime.combine(end_date, datetime.time.max, tzinfo=MSK)
 
         new_id = await get_next_id("leave_requests")
         request = LeaveRequest(

@@ -285,9 +285,6 @@ class LeaveManagementButton(
         now = discord.utils.utcnow()
         member = await interaction.client.getch_member(request.user_id)
 
-        user_db.leave_status = request.leave_type.value
-        await user_db.save()
-
         request.status = "APPROVED"
         request.reviewer_id = interaction.user.id
         request.approved_at = now
@@ -299,19 +296,17 @@ class LeaveManagementButton(
         from cogs.leave import schedule_leave_expiry, schedule_leave_activation
 
         if now >= start_t:
-            user_db = await User.find_one(User.discord_id == request.user_id)
-            if user_db:
-                user_db.leave_status = request.leave_type.value
-                await user_db.save()
-                if member:
-                    await apply_leave_nick_and_role(interaction.client, member, user_db, request.leave_type)
-            await interaction.response.send_message("✅ Отпуск одобрен и активирован.",
-                                                    ephemeral=True)
+            user_db.leave_status = request.leave_type.value
+            await user_db.save()
+            if member:
+                await apply_leave_nick_and_role(interaction.client, member, user_db, request.leave_type)
+            followup_text = "✅ Отпуск одобрен и активирован."
         else:
             await schedule_leave_activation(interaction.client, request)
-            await interaction.response.send_message(
-                f"✅ Отпуск одобрен. Роли будут выданы автоматически {discord.utils.format_dt(start_t, 'd')}.",
-                ephemeral=True)
+            followup_text = (
+                f"✅ Отпуск одобрен. Роли будут выданы автоматически "
+                f"{discord.utils.format_dt(start_t, 'd')}."
+            )
 
         await schedule_leave_expiry(interaction.client, request)
 
@@ -321,6 +316,7 @@ class LeaveManagementButton(
             embed=embed,
             view=LeaveManagementView(request.id, status="APPROVED"),
         )
+        await interaction.followup.send(followup_text, ephemeral=True)
 
         await notify_leave_approved(interaction.client, request.user_id, request)
 

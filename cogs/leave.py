@@ -20,6 +20,7 @@ from utils.permissions import has_update_permission
 logger = logging.getLogger(__name__)
 
 _leave_timers: dict[int, asyncio.Task] = {}
+_leave_activation_timers: dict[int, asyncio.Task] = {}
 _timers_restored = False
 
 ic_channel_id = config.CHANNELS["ic_leave"]
@@ -58,14 +59,23 @@ async def schedule_leave_activation(bot: Bot, request: LeaveRequest):
         await _activate_leave(bot, request.id)
         return
 
+    prev = _leave_activation_timers.pop(request.id, None)
+    if prev and not prev.done():
+        prev.cancel()
+
     async def _run():
         try:
             await asyncio.sleep(delay)
             await _activate_leave(bot, request.id)
         except asyncio.CancelledError:
             pass
+        except Exception as e:
+            logger.error(f"Ошибка в таймере активации отпуска #{request.id}: {e}")
+        finally:
+            _leave_activation_timers.pop(request.id, None)
 
-    asyncio.create_task(_run())
+    task = asyncio.create_task(_run())
+    _leave_activation_timers[request.id] = task
 
 
 async def _expire_leave(bot: Bot, request_id: int):
@@ -110,9 +120,6 @@ async def _expire_leave(bot: Bot, request_id: int):
 
 async def schedule_leave_expiry(bot: Bot, request: LeaveRequest):
     """Планирует задачу завершения отпуска через оставшееся время."""
-    if request.ends_at is None:
-        return
-
     now = discord.utils.utcnow()
     delay = (request.ends_at.replace(tzinfo=datetime.timezone.utc) - now).total_seconds()
 
@@ -136,10 +143,11 @@ async def schedule_leave_expiry(bot: Bot, request: LeaveRequest):
 
 
 def cancel_leave_timer(request_id: int):
-    """Отменяет таймер завершения отпуска."""
-    task = _leave_timers.pop(request_id, None)
-    if task and not task.done():
-        task.cancel()
+    """Отменяет таймеры активации и завершения отпуска."""
+    for timers in (_leave_timers, _leave_activation_timers):
+        task = timers.pop(request_id, None)
+        if task and not task.done():
+            task.cancel()
 
 
 async def restore_leave_timers(bot: Bot):
@@ -152,8 +160,17 @@ async def restore_leave_timers(bot: Bot):
     now = discord.utils.utcnow()
 
     for req in active:
-        start_t = req.starts_at.replace(tzinfo=datetime.timezone.utc)
-        end_t = req.ends_at.replace(tzinfo=datetime.timezone.utc)
+        starts_at = getattr(req, "starts_at", None)
+        ends_at = getattr(req, "ends_at", None)
+        if starts_at is None or ends_at is None:
+            logger.warning(
+                f"Пропускаем восстановление таймера отпуска #{req.id}: "
+                f"отсутствует starts_at/ends_at (старая запись)."
+            )
+            continue
+
+        start_t = starts_at.replace(tzinfo=datetime.timezone.utc)
+        end_t = ends_at.replace(tzinfo=datetime.timezone.utc)
 
         if now >= end_t:
             await _expire_leave(bot, req.id)
