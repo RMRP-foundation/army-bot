@@ -85,7 +85,7 @@ class LeaveRequestModal(discord.ui.Modal):
             )
             return
 
-        days = (end_date - start_date).days + 1
+        days = (end_date - start_date).days
 
         if self.leave_type == LeaveType.IC:
             if not (1 <= days <= IC_MAX_DAYS):
@@ -107,7 +107,7 @@ class LeaveRequestModal(discord.ui.Modal):
         )
 
         start_dt = datetime.datetime.combine(start_date, datetime.time.min, tzinfo=MSK)
-        end_dt = datetime.datetime.combine(end_date, datetime.time.max, tzinfo=MSK)
+        end_dt = datetime.datetime.combine(end_date, datetime.time.min, tzinfo=MSK)
 
         new_id = await get_next_id("leave_requests")
         request = LeaveRequest(
