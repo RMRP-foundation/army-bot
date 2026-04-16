@@ -26,6 +26,48 @@ ic_channel_id = config.CHANNELS["ic_leave"]
 ooc_channel_id = config.CHANNELS["ooc_leave"]
 
 
+async def _activate_leave(bot: Bot, request_id: int):
+    """Выдает роль и ник, когда наступает дата начала отпуска."""
+    request = await LeaveRequest.find_one(LeaveRequest.id == request_id)
+    if not request or request.status != "APPROVED":
+        return
+
+    member = await bot.getch_member(request.user_id)
+    user_db = await User.find_one(User.discord_id == request.user_id)
+
+    if member and user_db:
+        user_db.leave_status = request.leave_type.value
+        await user_db.save()
+
+        if not request.original_nick:
+            request.original_nick = member.display_name
+            await request.save()
+
+        from ui.views.leave import apply_leave_nick_and_role
+        await apply_leave_nick_and_role(bot, member, user_db, request.leave_type)
+
+
+async def schedule_leave_activation(bot: Bot, request: LeaveRequest):
+    """Планирует выдачу роли в будущем."""
+    now = discord.utils.utcnow()
+    # starts_at в БД уже в UTC
+    start_time = request.starts_at.replace(tzinfo=datetime.timezone.utc)
+    delay = (start_time - now).total_seconds()
+
+    if delay <= 0:
+        await _activate_leave(bot, request.id)
+        return
+
+    async def _run():
+        try:
+            await asyncio.sleep(delay)
+            await _activate_leave(bot, request.id)
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.create_task(_run())
+
+
 async def _expire_leave(bot: Bot, request_id: int):
     """Завершает отпуск по истечении срока."""
     request = await LeaveRequest.find_one(LeaveRequest.id == request_id)
@@ -105,18 +147,24 @@ async def restore_leave_timers(bot: Bot):
     global _timers_restored
     if _timers_restored:
         return
+
     active = await LeaveRequest.find(LeaveRequest.status == "APPROVED").to_list()
+    now = discord.utils.utcnow()
 
     for req in active:
-        if req.ends_at is None:
-            continue
-        now = discord.utils.utcnow()
-        if req.ends_at.replace(tzinfo=datetime.timezone.utc) <= now:
+        start_t = req.starts_at.replace(tzinfo=datetime.timezone.utc)
+        end_t = req.ends_at.replace(tzinfo=datetime.timezone.utc)
+
+        if now >= end_t:
             await _expire_leave(bot, req.id)
+        elif now >= start_t:
+            await schedule_leave_expiry(bot, req)
         else:
+            await schedule_leave_activation(bot, req)
             await schedule_leave_expiry(bot, req)
 
     _timers_restored = True
+
 
 async def update_bottom_message(bot: Bot, leave_type: LeaveType):
     """Обновляет сообщение для подачи заявки в зависимости от типа отпуска."""

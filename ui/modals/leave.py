@@ -1,3 +1,6 @@
+import datetime
+
+import dateparser
 import discord
 
 from config import OOC_MIN_DAYS, OOC_MAX_DAYS, IC_MAX_DAYS
@@ -5,21 +8,43 @@ from database.counters import get_next_id
 from database.models import LeaveRequest, LeaveType
 from utils.user_data import get_initiator
 
+DATEPARSER_SETTINGS = {
+    "PREFER_DAY_OF_MONTH": "first",
+    "RETURN_AS_TIMEZONE_AWARE": True,
+    "DATE_ORDER": "DMY",
+    "PREFER_DATES_FROM": "future",
+    "TIMEZONE": "Europe/Moscow",
+    "TO_TIMEZONE": "Europe/Moscow",
+    "REQUIRE_PARTS": ["day", "month"],
+}
+
+
+def parse_date(raw: str) -> datetime.date | None:
+    raw = raw.strip()
+    result = dateparser.parse(
+        raw,
+        languages=["ru", "en"],
+        date_formats=["%d.%m", "%d.%m.%Y", "%d/%m/%Y", "%d-%m-%Y"],
+        settings=DATEPARSER_SETTINGS
+    )
+    print(result)
+    return result.date() if result else None
 
 class LeaveRequestModal(discord.ui.Modal):
     def __init__(self, leave_type: LeaveType):
         super().__init__(title=f"Заявление на {leave_type.value} отпуск")
         self.leave_type = leave_type
 
-        days_hint = (
-            f"1–{IC_MAX_DAYS}" if leave_type == LeaveType.IC
-            else f"{OOC_MIN_DAYS}–{OOC_MAX_DAYS}"
+        self.start_input = discord.ui.TextInput(
+            label="Дата начала",
+            placeholder="например: 20.05.2026, 20 мая, завтра",
+            max_length=30,
+            required=True,
         )
-
-        self.days_input = discord.ui.TextInput(
-            label="Количество дней",
-            placeholder=days_hint,
-            max_length=2,
+        self.end_input = discord.ui.TextInput(
+            label="Дата окончания",
+            placeholder="например: 25.05.2026, 25 мая",
+            max_length=30,
             required=True,
         )
         self.reason_input = discord.ui.TextInput(
@@ -29,31 +54,50 @@ class LeaveRequestModal(discord.ui.Modal):
             max_length=500,
             required=True,
         )
-        self.add_item(self.days_input)
+        self.add_item(self.start_input)
+        self.add_item(self.end_input)
         self.add_item(self.reason_input)
 
 
     async def on_submit(self, interaction: discord.Interaction):
         user_db = await get_initiator(interaction)
 
-        try:
-            days = int(self.days_input.value.strip())
-        except ValueError:
+        start_date = parse_date(self.start_input.value)
+        end_date = parse_date(self.end_input.value)
+
+        if not start_date or not end_date:
             await interaction.response.send_message(
-                "❌ Введите корректное число дней.", ephemeral=True
+                "❌ Не удалось распознать даты. Попробуйте формат: `20.05.2026`.",
+                ephemeral=True,
             )
             return
+
+        today = (discord.utils.utcnow() + datetime.timedelta(hours=3)).date()
+        if start_date < today:
+            await interaction.response.send_message(
+                "❌ Дата начала не может быть в прошлом.", ephemeral=True
+            )
+            return
+
+        if end_date <= start_date:
+            await interaction.response.send_message(
+                "❌ Дата окончания должна быть позже даты начала.", ephemeral=True
+            )
+            return
+
+        days = (end_date - start_date).days
 
         if self.leave_type == LeaveType.IC:
             if not (1 <= days <= IC_MAX_DAYS):
                 await interaction.response.send_message(
-                    f"❌ IC отпуск можно взять на промежуток от 1 до {IC_MAX_DAYS} дней.", ephemeral=True
+                    f"❌ IC отпуск можно взять на 1–{IC_MAX_DAYS} дней (у вас {days} дн.).",
+                    ephemeral=True,
                 )
                 return
         else:
             if not (OOC_MIN_DAYS <= days <= OOC_MAX_DAYS):
                 await interaction.response.send_message(
-                    f"❌ OOC отпуск можно взять на промежуток от {OOC_MIN_DAYS} до {OOC_MAX_DAYS} дней.",
+                    f"❌ OOC отпуск можно взять на {OOC_MIN_DAYS}–{OOC_MAX_DAYS} дней (у вас {days} дн.).",
                     ephemeral=True,
                 )
                 return
@@ -62,13 +106,17 @@ class LeaveRequestModal(discord.ui.Modal):
             "✅ Заявление подаётся...", ephemeral=True
         )
 
+        start_dt = datetime.datetime.combine(start_date, datetime.time.min)
+        end_dt = datetime.datetime.combine(end_date, datetime.time.min)
+
         new_id = await get_next_id("leave_requests")
         request = LeaveRequest(
             id=new_id,
             user_id=interaction.user.id,
             leave_type=self.leave_type,
             reason=self.reason_input.value.strip(),
-            days=days,
+            starts_at=start_dt.astimezone(datetime.timezone.utc),
+            ends_at=end_dt.astimezone(datetime.timezone.utc)
         )
         await request.create()
 

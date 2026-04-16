@@ -21,7 +21,7 @@ from utils.user_data import get_initiator
 MSK = datetime.timezone(datetime.timedelta(hours=3))
 
 
-async def _apply_leave_nick_and_role(
+async def apply_leave_nick_and_role(
         bot, member: discord.Member, user_db: User, leave_type: LeaveType
 ) -> None:
     """Выдаёт отпускной ник и роль."""
@@ -291,14 +291,29 @@ class LeaveManagementButton(
         request.status = "APPROVED"
         request.reviewer_id = interaction.user.id
         request.approved_at = now
-        request.ends_at = now + datetime.timedelta(days=request.days)
         request.original_nick = member.display_name if member else None
         await request.save()
 
-        if member:
-            await _apply_leave_nick_and_role(
-                interaction.client, member, user_db, request.leave_type
-            )
+        start_t = request.starts_at.replace(tzinfo=datetime.timezone.utc)
+
+        from cogs.leave import schedule_leave_expiry, schedule_leave_activation
+
+        if now >= start_t:
+            user_db = await User.find_one(User.discord_id == request.user_id)
+            if user_db:
+                user_db.leave_status = request.leave_type.value
+                await user_db.save()
+                if member:
+                    await apply_leave_nick_and_role(interaction.client, member, user_db, request.leave_type)
+            await interaction.response.send_message("✅ Отпуск одобрен и активирован.",
+                                                    ephemeral=True)
+        else:
+            await schedule_leave_activation(interaction.client, request)
+            await interaction.response.send_message(
+                f"✅ Отпуск одобрен. Роли будут выданы автоматически {discord.utils.format_dt(start_t, 'd')}.",
+                ephemeral=True)
+
+        await schedule_leave_expiry(interaction.client, request)
 
         embed = await request.to_embed()
         await interaction.response.edit_message(
@@ -308,9 +323,6 @@ class LeaveManagementButton(
         )
 
         await notify_leave_approved(interaction.client, request.user_id, request)
-
-        from cogs.leave import schedule_leave_expiry
-        await schedule_leave_expiry(interaction.client, request)
 
     async def _handle_reject(self, interaction: discord.Interaction, request: LeaveRequest):
         is_ok, err = await self._check_officer(interaction, request)

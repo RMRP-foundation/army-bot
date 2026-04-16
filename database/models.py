@@ -674,7 +674,8 @@ class LeaveRequest(Document):
     user_id: int
     leave_type: LeaveType
     reason: str
-    days: int
+    starts_at: datetime.datetime
+    ends_at: datetime.datetime
     original_nick: str | None = None  # Ник до отпуска для ССО
 
     status: str = "PENDING"
@@ -684,7 +685,6 @@ class LeaveRequest(Document):
 
     created_at: datetime.datetime = Field(default_factory=discord.utils.utcnow)
     approved_at: datetime.datetime | None = None
-    ends_at: datetime.datetime | None = None
     message_id: int | None = None
 
     async def to_embed(self) -> discord.Embed:
@@ -705,14 +705,10 @@ class LeaveRequest(Document):
             if dt is None: return None
             return dt.replace(tzinfo=datetime.timezone.utc) if dt.tzinfo is None else dt
 
-        ends_at = to_utc(self.ends_at)
-        created_at = to_utc(self.created_at)
-        annulled_at = to_utc(self.annulled_at)
-
         e = discord.Embed(
             title=f"{emoji} Заявление на {self.leave_type.value} отпуск #{self.id}",
             color=color,
-            timestamp=created_at,
+            timestamp=to_utc(self.created_at),
         )
 
         requester = await User.find_one(User.discord_id == self.user_id)
@@ -721,26 +717,17 @@ class LeaveRequest(Document):
 
         e.add_field(name="Звание", value=display_rank(requester.rank), inline=False)
         div_name = divisions.get_division_name(requester.division) or "Нет"
-        e.add_field(name="Подразделение", value=div_name, inline=True)
+        e.add_field(name="Подразделение", value=div_name, inline=False)
 
-        if requester.position:
-            e.add_field(name="Должность", value=requester.position, inline=True)
-
-        if self.ends_at:
-            ends_fmt = (
-                f"{discord.utils.format_dt(ends_at, 'd')} "
-                f"({discord.utils.format_dt(ends_at, 'R')})"
-            )
-            e.add_field(name="Дата окончания", value=ends_fmt, inline=False)
-        else:
-            e.add_field(name="Продолжительность", value=f"{self.days} дн.", inline=False)
+        e.add_field(name="Дата начала", value=discord.utils.format_dt(to_utc(self.starts_at), "d"), inline=True)
+        e.add_field(name="Дата окончания", value=discord.utils.format_dt(to_utc(self.ends_at), "d"), inline=True)
 
         e.add_field(name="Причина", value=self.reason, inline=False)
 
         if self.reviewer_id:
             e.add_field(name="Рассмотрел", value=f"<@{self.reviewer_id}>", inline=True)
 
-        if self.annuller_id and annulled_at:
+        if self.annuller_id and (annulled_at := to_utc(self.annulled_at)):
             e.add_field(
                 name="Аннулировал",
                 value=(

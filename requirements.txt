@@ -3,3 +3,4 @@ pymongo~=4.16.0
 python-dotenv~=1.2.1
 beanie~=2.0.1
 cachetools~=5.5.2
+dateparser~=1.4.0

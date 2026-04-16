@@ -196,7 +196,6 @@ async def notify_leave_approved(bot, user_id: int, request) -> bool:
         title="✅ Отпуск одобрен",
         description=(
             f"Ваш **{type_label}** отпуск одобрен.\n\n"
-            f"**Продолжительность:** {request.days} дн.\n"
             f"**Истекает:** {ends_at_fmt}"
         ),
         color=discord.Color.green(),
