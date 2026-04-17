@@ -34,18 +34,36 @@ ROLE_REQUIRED_RANKS = {
     RoleType.GOV_EMPLOYEE: "Полковник",
 }
 
+ROLE_RESUBMIT_COOLDOWN = datetime.timedelta(hours=24)
 
 async def _check_can_apply(interaction: discord.Interaction, check_blacklist: bool = False) -> bool:
-    opened_request = await RoleRequest.find_one(
+    processing = await RoleRequest.find_one(
         RoleRequest.user == interaction.user.id,
-        In(RoleRequest.status, ["PENDING", "PROCESSING"])
+        RoleRequest.status == "PROCESSING",
     )
-    if opened_request is not None:
+    if processing is not None:
         await interaction.response.send_message(
-            "### У вас уже есть открытое заявление на рассмотрении.\nОжидайте его рассмотрения.",
+            "### ⏳ Ваша заявка сейчас рассматривается офицером.\nПодождите завершения.",
             ephemeral=True,
         )
         return False
+
+    pending = await RoleRequest.find_one(
+        RoleRequest.user == interaction.user.id,
+        RoleRequest.status == "PENDING",
+    )
+    if pending is not None:
+        age = discord.utils.utcnow() - pending.sent_at.replace(tzinfo=datetime.timezone.utc)
+        if age < ROLE_RESUBMIT_COOLDOWN:
+            retry_at = pending.sent_at.replace(tzinfo=datetime.timezone.utc) + ROLE_RESUBMIT_COOLDOWN
+            await interaction.response.send_message(
+                f"### ⏳ Заявка уже подана\n"
+                f"Повторно подать можно {discord.utils.format_dt(retry_at, 'R')}, "
+                f"если текущая не будет рассмотрена.",
+                ephemeral=True,
+            )
+            return False
+
     if check_blacklist:
         user = await get_initiator(interaction)
         if user and user.blacklist:
@@ -56,8 +74,8 @@ async def _check_can_apply(interaction: discord.Interaction, check_blacklist: bo
                 ephemeral=True,
             )
             return False
-    return True
 
+    return True
 
 async def army_button_callback(interaction: discord.Interaction):
     if not await _check_can_apply(interaction, check_blacklist=True):

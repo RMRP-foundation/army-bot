@@ -193,7 +193,8 @@ class RoleRequest(Document):
     data: RoleData | None = None
     extended_data: ExtendedRoleData | None = None
     status: str = "PENDING"
-    sent_at: datetime.datetime = Field(default_factory=datetime.datetime.now)
+    sent_at: datetime.datetime = Field(default_factory=discord.utils.utcnow)
+    message_id: int | None = None
 
     def _get_role_type_name(self) -> str:
         names = {
