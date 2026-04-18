@@ -68,14 +68,13 @@ class UserEdit(commands.Cog):
             )
             return False
 
-        if target_user_db.rank is not None:
-            if (editor_db.rank or 0) <= target_user_db.rank:
-                await interaction.response.send_message(
-                    "❌ Вы не можете редактировать пользователей "
-                    "равного или старшего звания.",
-                    ephemeral=True,
-                )
-                return False
+        if (editor_db.rank or 0) <= target_user_db.rank:
+            await interaction.response.send_message(
+                "❌ Вы не можете редактировать пользователей "
+                "равного или старшего звания.",
+                ephemeral=True,
+            )
+            return False
 
         return True
 
@@ -152,6 +151,12 @@ class UserEdit(commands.Cog):
         if not user_info:
             await interaction.response.send_message(
                 "Пользователь не найден в БД.", ephemeral=True
+            )
+            return
+
+        if user_info.rank is None:
+            await interaction.response.send_message(
+                "❌ Пользователь не состоит на службе.", ephemeral=True
             )
             return
 
