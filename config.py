@@ -1,3 +1,4 @@
+import datetime
 import logging
 import os
 import re
@@ -168,6 +169,8 @@ SUPPLY_LIMITS = {
     "Обезболивающее": 15,  # Конкретный предмет
     "Дефибриллятор": 15,  # Конкретный предмет
 }
+
+ROLE_RESUBMIT_COOLDOWN = datetime.timedelta(hours=24)
 
 IC_MAX_DAYS = 5
 OOC_MIN_DAYS = 7

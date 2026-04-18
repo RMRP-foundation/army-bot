@@ -36,8 +36,8 @@ async def _reject_stale_pending(interaction: discord.Interaction) -> bool:
 
     age = discord.utils.utcnow() - old_pending.sent_at.replace(tzinfo=datetime.timezone.utc)
 
-    if age < datetime.timedelta(hours=24):
-        retry_at = old_pending.sent_at.replace(tzinfo=datetime.timezone.utc) + datetime.timedelta(hours=24)
+    if age < config.ROLE_RESUBMIT_COOLDOWN:
+        retry_at = old_pending.sent_at.replace(tzinfo=datetime.timezone.utc) + config.ROLE_RESUBMIT_COOLDOWN
         await interaction.response.send_message(
             f"### ⏳ Заявка уже подана\n"
             f"Повторно подать можно {discord.utils.format_dt(retry_at, 'R')}, "
@@ -46,10 +46,17 @@ async def _reject_stale_pending(interaction: discord.Interaction) -> bool:
         )
         return False
 
-    await RoleRequest.get_pymongo_collection().update_one(
+    result = await RoleRequest.get_pymongo_collection().update_one(
         {"_id": old_pending.id, "status": "PENDING"},
         {"$set": {"status": "REJECTED"}},
     )
+
+    if result.modified_count == 0:
+        await interaction.response.send_message(
+            "### ⏳ Заявка уже подана\nПодождите завершения.",
+            ephemeral=True,
+        )
+        return False
 
     if old_pending.message_id:
         try:
@@ -322,9 +329,12 @@ class GovEmployeeModal(discord.ui.Modal, title="Заявление на роль
             )
             return
 
-        await interaction.response.send_message(
-            "### Заявление отправлено на рассмотрение.", ephemeral=True
-        )
+        try:
+            await interaction.response.send_message(
+                "### Заявление отправлено на рассмотрение.", ephemeral=True
+            )
+        except discord.NotFound:
+            pass
 
         request = RoleRequest(
             id=await get_next_id("role_requests"),

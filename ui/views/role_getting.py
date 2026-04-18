@@ -4,7 +4,6 @@ import re
 from typing import Any
 
 import discord
-from beanie.odm.operators.find.comparison import In
 from discord import Interaction, InteractionResponse
 from discord._types import ClientT
 
@@ -34,8 +33,6 @@ ROLE_REQUIRED_RANKS = {
     RoleType.GOV_EMPLOYEE: "Полковник",
 }
 
-ROLE_RESUBMIT_COOLDOWN = datetime.timedelta(hours=24)
-
 async def _check_can_apply(interaction: discord.Interaction, check_blacklist: bool = False) -> bool:
     processing = await RoleRequest.find_one(
         RoleRequest.user == interaction.user.id,
@@ -54,8 +51,8 @@ async def _check_can_apply(interaction: discord.Interaction, check_blacklist: bo
     )
     if pending is not None:
         age = discord.utils.utcnow() - pending.sent_at.replace(tzinfo=datetime.timezone.utc)
-        if age < ROLE_RESUBMIT_COOLDOWN:
-            retry_at = pending.sent_at.replace(tzinfo=datetime.timezone.utc) + ROLE_RESUBMIT_COOLDOWN
+        if age < config.ROLE_RESUBMIT_COOLDOWN:
+            retry_at = pending.sent_at.replace(tzinfo=datetime.timezone.utc) + config.ROLE_RESUBMIT_COOLDOWN
             await interaction.response.send_message(
                 f"### ⏳ Заявка уже подана\n"
                 f"Повторно подать можно {discord.utils.format_dt(retry_at, 'R')}, "
