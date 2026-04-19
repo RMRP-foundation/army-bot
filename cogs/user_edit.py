@@ -238,6 +238,12 @@ class UserEdit(commands.Cog):
             )
             return
 
+        if user_info.rank is None:
+            await interaction.response.send_message(
+                "❌ Пользователь не состоит на службе.", ephemeral=True
+            )
+            return
+
         if not await self._check_permissions(interaction, user_info):
             return
 
@@ -252,9 +258,7 @@ class UserEdit(commands.Cog):
 
         old_rank = user_info.rank
 
-        if user_info.rank is None:
-            user_info.rank = 0
-        elif user_info.rank < len(config.RANKS) - 1:
+        if user_info.rank < len(config.RANKS) - 1:
             user_info.rank += 1
         else:
             await interaction.response.send_message(
