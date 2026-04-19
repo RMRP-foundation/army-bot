@@ -34,6 +34,13 @@ ROLE_REQUIRED_RANKS = {
 }
 
 async def _check_can_apply(interaction: discord.Interaction, check_blacklist: bool = False) -> bool:
+    user = await User.find_one(User.discord_id == interaction.user.id)
+    if user and user.rank is not None:
+        await interaction.response.send_message(
+            "❌ Вы уже состоите на службе.", ephemeral=True
+        )
+        return False
+
     processing = await RoleRequest.find_one(
         RoleRequest.user == interaction.user.id,
         RoleRequest.status == "PROCESSING",
@@ -255,6 +262,15 @@ class RoleManagementButton(
             return
 
         request = await RoleRequest.find_one(RoleRequest.id == self.request_id)
+
+        if interaction.user.id == request.user:
+            await RoleRequest.get_pymongo_collection().update_one(
+                {"_id": self.request_id}, {"$set": {"status": "PENDING"}}
+            )
+            await interaction.response.send_message(
+                "❌ Вы не можете рассматривать собственную заявку.", ephemeral=True
+            )
+            return
 
         if not await check_approve_permission(interaction, request):
             await RoleRequest.get_pymongo_collection().update_one(
