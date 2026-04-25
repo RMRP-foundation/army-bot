@@ -721,7 +721,7 @@ class LeaveRequest(Document):
         e.add_field(name="Подразделение", value=div_name, inline=False)
 
         e.add_field(name="Дата начала", value=discord.utils.format_dt(to_utc(self.starts_at), "d"), inline=True)
-        e.add_field(name="Дата окончания", value=discord.utils.format_dt(to_utc(self.ends_at), "d"), inline=True)
+        e.add_field(name="Дата выхода", value=discord.utils.format_dt(to_utc(self.ends_at), "d"), inline=True)
 
         e.add_field(name="Причина", value=self.reason, inline=False)
 

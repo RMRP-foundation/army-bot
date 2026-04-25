@@ -42,7 +42,7 @@ class LeaveRequestModal(discord.ui.Modal):
             required=True,
         )
         self.end_input = discord.ui.TextInput(
-            label="Дата окончания",
+            label="Дата выхода",
             placeholder="например: 25.05.2026, 25 мая",
             max_length=30,
             required=True,
@@ -81,7 +81,7 @@ class LeaveRequestModal(discord.ui.Modal):
 
         if end_date <= start_date:
             await interaction.response.send_message(
-                "❌ Дата окончания должна быть позже даты начала.", ephemeral=True
+                "❌ Дата выхода должна быть позже даты начала.", ephemeral=True
             )
             return
 
