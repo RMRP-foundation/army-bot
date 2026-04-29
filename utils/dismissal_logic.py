@@ -12,6 +12,12 @@ async def check_and_apply_penalty(
         audit_msg_url: str
 ) -> bool:
 
+    # КМБ не выдаем ЧС за неустойку
+    target_member = await interaction.client.getch_member(target_user_db.discord_id)
+    if target_member:
+        if any(role.id == config.RoleId.KMB.value for role in target_member.roles):
+            return False
+
     days_in_organization = (
         (datetime.datetime.now() - target_user_db.invited_at).days
         if target_user_db.invited_at
