@@ -68,7 +68,7 @@ class UserEdit(commands.Cog):
             )
             return False
 
-        if (editor_db.rank or 0) <= target_user_db.rank:
+        if (editor_db.rank or 0) <= (target_user_db.rank or 0):
             await interaction.response.send_message(
                 "❌ Вы не можете редактировать пользователей "
                 "равного или старшего звания.",
