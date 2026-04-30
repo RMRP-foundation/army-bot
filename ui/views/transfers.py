@@ -332,20 +332,11 @@ class RejectTransferButton(
             return
 
         old_status = request.status
-
-        from utils.mongo_lock import try_lock
-        if not await try_lock(TransferRequest, self.request_id, "status", "PROCESSING", ["OLD_DIVISION_REVIEW", "NEW_DIVISION_REVIEW"]):
-            return await interaction.response.send_message("❌ Запрос уже обрабатывается.", ephemeral=True)
-
         officer = await get_initiator(interaction)
 
         if not can_user_handle_transfer(
-            officer, [request.old_division_id, request.new_division_id]
+                officer, [request.old_division_id, request.new_division_id]
         ):
-            await TransferRequest.get_pymongo_collection().update_one(
-                {"_id": self.request_id}, {"$set": {"status": old_status}}
-            )
-
             await interaction.response.send_message(
                 "У вас нет прав взаимодействовать с этой кнопкой.", ephemeral=True
             )
@@ -369,6 +360,11 @@ class RejectTransferButton(
         modal.add_item(reason_input)
 
         async def on_modal_submit(modal_interaction: discord.Interaction):
+            from utils.mongo_lock import try_lock
+            if not await try_lock(TransferRequest, self.request_id, "status", "PROCESSING", old_status):
+                await modal_interaction.response.send_message("❌ Запрос уже обрабатывается.", ephemeral=True)
+                return
+
             reason = reason_input.value
             request.reject_reason = reason
             request.status = "REJECTED"
@@ -380,7 +376,6 @@ class RejectTransferButton(
                 view=indicator_view("Отклонено", emoji="👎"),
             )
 
-            # Уведомление в ЛС
             await notify_transfer_rejected(interaction.client, request.user_id, reason)
 
         modal.on_submit = on_modal_submit
