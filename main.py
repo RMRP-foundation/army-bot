@@ -25,7 +25,7 @@ def main():
     intents = discord.Intents.default()
     intents.members = True          # Для выдачи ролей и ников
     intents.message_content = True  # Для работы префиксных команд (!refresh_...)
-    bot = Bot(command_prefix="!", intents=intents)
+    bot = Bot(command_prefix="!", intents=intents, help_command=None)
 
     bot.run(token)
 
