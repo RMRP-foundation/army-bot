@@ -1,3 +1,4 @@
+import asyncio
 import datetime
 from discord.ext import commands, tasks
 import config
@@ -45,6 +46,7 @@ class Logistics(commands.Cog):
                     await msg.edit(embed=await req.to_embed(), view=None)
                 except:
                     continue
+            await asyncio.sleep(1)
 
     @commands.command(name="refresh_logistics")
     @has_update_permission()

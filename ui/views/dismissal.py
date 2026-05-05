@@ -122,11 +122,11 @@ class DismissalManagementButton(
         return cls(match.group("action"), int(match.group("id")))
 
     async def callback(self, interaction: discord.Interaction):
+        await interaction.response.send_message("⏳ Выполняются действия...", ephemeral=True)
+
         from utils.mongo_lock import try_lock
         if not await try_lock(DismissalRequest, self.request_id, "status", "PROCESSING", "PENDING"):
-            await interaction.response.send_message(
-                "❌ Заявка не найдена или уже обработана.", ephemeral=True
-            )
+            await interaction.edit_original_response(content="❌ Заявка не найдена или уже обработана.")
             return
 
         officer = await get_initiator(interaction)
@@ -134,9 +134,7 @@ class DismissalManagementButton(
             await DismissalRequest.get_pymongo_collection().update_one(
                 {"_id": self.request_id}, {"$set": {"status": "PENDING"}}
             )
-            await interaction.response.send_message(
-                "❌ Доступно со звания Капитан.", ephemeral=True
-            )
+            await interaction.edit_original_response(content="❌ Доступно со звания Капитан.")
             return
 
         req = await DismissalRequest.find_one(DismissalRequest.id == self.request_id)
@@ -145,10 +143,8 @@ class DismissalManagementButton(
             await DismissalRequest.get_pymongo_collection().update_one(
                 {"_id": self.request_id}, {"$set": {"status": "PENDING"}}
             )
-            await interaction.response.send_message(
-                "❌ Вы не можете увольнять пользователей "
-                "равного или старшего звания.",
-                ephemeral=True,
+            await interaction.edit_original_response(
+                content="❌ Вы не можете увольнять пользователей равного или старшего звания."
             )
             return
 
@@ -160,13 +156,14 @@ class DismissalManagementButton(
 
             embed = await req.to_embed(interaction.client)
             try:
-                await interaction.response.edit_message(
+                await interaction.message.edit(
                     content=f"<@{req.user_id}> {interaction.user.mention}",
                     embed=embed,
                     view=None,
                 )
             except discord.NotFound:
                 pass
+            await interaction.edit_original_response(content="✅ Рапорт отклонён.")
             return
 
         if self.action == "approve":
@@ -175,18 +172,10 @@ class DismissalManagementButton(
                 await DismissalRequest.get_pymongo_collection().update_one(
                     {"_id": self.request_id}, {"$set": {"status": "PENDING"}}
                 )
-                await interaction.response.send_message(
-                    "❌ Пользователь не найден в БД.", ephemeral=True
-                )
+                await interaction.edit_original_response(content="❌ Пользователь не найден в БД.")
                 return
 
-            await interaction.response.send_message(
-                "✅ Выполняются действия...", ephemeral=True
-            )
-
-            target_user_db.first_name, target_user_db.last_name = req.full_name.split(
-                " ", 1
-            )
+            target_user_db.first_name, target_user_db.last_name = req.full_name.split(" ", 1)
 
             audit_msg = await audit_logger.log_action(
                 AuditAction.DISMISSED,
@@ -248,7 +237,6 @@ class DismissalManagementButton(
             req.reviewed_at = datetime.datetime.now()
             await req.save()
 
-            # Уведомление в ЛС об увольнении
             await notify_dismissed(
                 interaction.client, req.user_id, f"Увольнение по рапорту #{req.id}", by_report=True
             )
@@ -263,7 +251,7 @@ class DismissalManagementButton(
                 embed=embed,
                 view=None,
             )
-
+            await interaction.edit_original_response(content="✅ Рапорт одобрен, сотрудник уволен.")
 
 class DismissalCancelButton(
     discord.ui.DynamicItem[discord.ui.Button], template=r"dismiss:cancel:(?P<id>\d+)"

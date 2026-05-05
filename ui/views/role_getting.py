@@ -255,10 +255,12 @@ class RoleManagementButton(
         return cls(match.group("action"), int(match.group("id")))
 
     async def callback(self, interaction: Interaction[ClientT]) -> Any:
+        await interaction.response.send_message("⏳ Выполняются действия...", ephemeral=True)
+
         from utils.mongo_lock import try_lock
 
         if not await try_lock(RoleRequest, self.request_id, "status", "PROCESSING", "PENDING"):
-            await interaction.response.send_message("❌ Заявка не найдена или уже обработана.", ephemeral=True)
+            await interaction.edit_original_response(content="❌ Заявка не найдена или уже обработана.")
             return
 
         request = await RoleRequest.find_one(RoleRequest.id == self.request_id)
@@ -267,9 +269,7 @@ class RoleManagementButton(
             await RoleRequest.get_pymongo_collection().update_one(
                 {"_id": self.request_id}, {"$set": {"status": "PENDING"}}
             )
-            await interaction.response.send_message(
-                "❌ Вы не можете рассматривать собственную заявку.", ephemeral=True
-            )
+            await interaction.edit_original_response(content="❌ Вы не можете рассматривать собственную заявку.")
             return
 
         if not await check_approve_permission(interaction, request):
@@ -277,17 +277,14 @@ class RoleManagementButton(
                 {"_id": self.request_id}, {"$set": {"status": "PENDING"}}
             )
             required = ROLE_REQUIRED_RANKS.get(request.role_type, "Полковник")
-            await interaction.response.send_message(
-                f"❌ У вас нет прав. Требуется звание: {required}+", ephemeral=True
-            )
+            await interaction.edit_original_response(content=f"❌ У вас нет прав. Требуется звание: {required}+")
             return
 
         if self.action == "approve":
             request.status = "APPROVED"
             await request.save()
 
-            assert isinstance(interaction.response, InteractionResponse)
-            await interaction.response.edit_message(
+            await interaction.message.edit(
                 content=f"-# ||<@{request.user}> {interaction.user.mention}||",
                 embed=await request.to_embed(),
                 view=indicator_view(f"Одобрил {interaction.user.display_name}", emoji="👍"),
@@ -297,20 +294,23 @@ class RoleManagementButton(
             if user_discord:
                 await _apply_role_discord(interaction, request, user_discord)
 
-            await notify_role_approved(interaction.client, request.user, ROLE_DISPLAY_NAMES.get(request.role_type, "Роль"))
+            await notify_role_approved(interaction.client, request.user,
+                                       ROLE_DISPLAY_NAMES.get(request.role_type, "Роль"))
+            await interaction.edit_original_response(content="✅ Заявка одобрена.")
 
         else:
             request.status = "REJECTED"
             await request.save()
 
-            assert isinstance(interaction.response, InteractionResponse)
-            await interaction.response.edit_message(
+            await interaction.message.edit(
                 content=f"-# ||<@{request.user}> {interaction.user.mention}||",
                 embed=await request.to_embed(),
                 view=indicator_view(f"Отклонил {interaction.user.display_name}", emoji="👎"),
             )
 
-            await notify_role_rejected(interaction.client, request.user, ROLE_DISPLAY_NAMES.get(request.role_type, "Роль"))
+            await notify_role_rejected(interaction.client, request.user,
+                                       ROLE_DISPLAY_NAMES.get(request.role_type, "Роль"))
+            await interaction.edit_original_response(content="✅ Заявка отклонена.")
 
 
 class RoleManagementView(discord.ui.View):

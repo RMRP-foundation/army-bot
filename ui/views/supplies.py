@@ -210,10 +210,9 @@ class CategorySelectButton(discord.ui.Button):
         self.request = request
 
     async def callback(self, interaction: discord.Interaction):
+        await interaction.response.send_message(f"⌛ Открываем категорию: {self.category}...", ephemeral=True)
         view = ItemSelectView(self.category, self.request, self.view)
-        await interaction.response.send_message(
-            f"📂 Категория: **{self.category}**", view=view, ephemeral=True
-        )
+        await interaction.edit_original_response(content=f"📂 Категория: **{self.category}**", view=view)
 
 
 class SupplyBuilderView(discord.ui.View):
@@ -289,19 +288,17 @@ class SupplyBuilderView(discord.ui.View):
             await interaction.response.send_message("❌ Корзина пуста!", ephemeral=True)
             return
 
+        await interaction.response.send_message("⏳ Сохраняем и отправляем вашу заявку...", ephemeral=True)
+
         is_valid, error_msg = check_limits(self.request.items)
         if not is_valid:
-            await interaction.response.send_message(f"❌ {error_msg}", ephemeral=True)
-            return
+            return await interaction.followup.send(f"❌ {error_msg}", ephemeral=True)
 
         if self.is_edit_mode:
             # Перечитываем из БД, чтобы не перезаписать статус, выставленный параллельным Approve
             fresh = await SupplyRequest.find_one(SupplyRequest.id == self.request.id)
             if not fresh or fresh.status != "PENDING":
-                await interaction.response.send_message(
-                    "❌ Заявка уже обработана другим администратором.", ephemeral=True
-                )
-                return
+                return await interaction.followup.send("❌ Заявка уже обработана другим офицером.", ephemeral=True)
             await fresh.set({"items": self.request.items})
 
             # Обновляем оригинальное сообщение в канале
@@ -317,9 +314,7 @@ class SupplyBuilderView(discord.ui.View):
                     except discord.NotFound:
                         pass  # сообщение удалено
 
-            await interaction.response.edit_message(
-                content="✅ Изменения сохранены.", embed=None, view=None
-            )
+            await interaction.followup.send("✅ Изменения сохранены.", ephemeral=True)
         else:
             target_user = await get_initiator(interaction)
 
@@ -358,9 +353,7 @@ class SupplyBuilderView(discord.ui.View):
 
                 await update_bottom_message(interaction.client)
 
-            await interaction.response.edit_message(
-                content="✅ Заявка успешно отправлена!", embed=None, view=None
-            )
+            await interaction.followup.send("✅ Заявка успешно отправлена!", ephemeral=True)
 
 
 class SupplyManageButton(
