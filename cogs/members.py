@@ -1,3 +1,4 @@
+import datetime
 import logging
 import math
 
@@ -6,7 +7,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from bot import Bot
-from config import RANK_EMOJIS, RANKS, RankIndex
+from config import RANK_EMOJIS, RankIndex, ACADEMY_DAYS_LIMIT
 from database import divisions
 from database.models import User
 from utils.user_data import format_game_id, get_initiator, display_rank
@@ -26,6 +27,23 @@ class MembersBrowser(discord.ui.LayoutView):
 
         self.render_page()
 
+    def _format_member(self, i: int, u: User) -> str:
+        abbr = getattr(self.division_info, "abbreviation", None)
+
+        overdue = (
+                abbr is not None
+                and abbr.lower() == "ва"
+                and u.invited_at is not None
+                and (discord.utils.utcnow() - u.invited_at.replace(tzinfo=datetime.timezone.utc)).days > ACADEMY_DAYS_LIMIT
+        )
+        return (
+            f"{i}. {RANK_EMOJIS[u.rank or 0]} "
+            f"`{format_game_id(u.static) if u.static else 'N // A'}` "
+            f"<@{u.discord_id}>{' ⚠️' if not self.guild.get_member(u.discord_id) else ''}{' ⏰' if overdue else ''} "
+            f"❯ {u.full_name or 'Без имени'} "
+            f"❯ {u.position or 'Без должности'}"
+        )
+
     def render_page(self):
         self.clear_items()
 
@@ -38,14 +56,7 @@ class MembersBrowser(discord.ui.LayoutView):
             f"{min(len(self.members), end)}/{len(self.members)} участников"
         )
 
-        members_text = "\n".join([
-            f"{i}. {RANK_EMOJIS[u.rank or 0]} "
-            f"`{format_game_id(u.static) if u.static else 'N // A'}` "
-            f"<@{u.discord_id}>{' ⚠️' if not self.guild.get_member(u.discord_id) else ''} "
-            f"❯ {u.full_name or 'Без имени'} "
-            f"❯ {u.position or 'Без должности'}"
-            for i, u in current_slice
-        ])
+        members_text = "\n".join([self._format_member(i, u) for i, u in current_slice])
 
         container = discord.ui.Container()
         container.add_item(discord.ui.TextDisplay(header_text))

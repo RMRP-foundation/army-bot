@@ -4,6 +4,7 @@ import database.models
 from database import divisions
 
 from utils.permissions import has_update_permission
+from database.models import User
 
 MODELS = {
     cls.__name__.lower().removesuffix("request"): cls
@@ -45,6 +46,16 @@ class Admin(commands.Cog):
                 {"_id": request_id, "status": "PROCESSING"},
                 {"$set": {"status": "PENDING"}},
             )
+
+    @commands.command(name="reset_division")
+    @has_update_permission()
+    async def reset_division_cmd(self, ctx, discord_id: int):
+        user = await User.find_one(database.models.User.discord_id == discord_id)
+        if user:
+            user.division = None
+            user.position = None
+            await user.save()
+            await ctx.message.add_reaction("✅")
 
 
 async def setup(bot):
