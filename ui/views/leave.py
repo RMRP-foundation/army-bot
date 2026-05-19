@@ -122,9 +122,12 @@ async def check_can_apply(interaction: discord.Interaction, leave_type: LeaveTyp
         LeaveRequest.status != "REJECTED",
     ).to_list()
 
-    if any(req.status == "PENDING" for req in user_requests):
-        await interaction.response.send_message("❌ Ваше предыдущее заявление еще находится на рассмотрении.",
-                                                ephemeral=True)
+    pending_req = next((req for req in user_requests if req.status == "PENDING"), None)
+    if pending_req:
+        await interaction.response.send_message(
+            f"❌ Ваше предыдущее заявление #{pending_req.id} еще находится на рассмотрении.",
+            ephemeral=True
+        )
         return False
 
     if leave_type == LeaveType.IC:
@@ -423,11 +426,11 @@ class LeaveManagementButton(
         from utils.mongo_lock import try_lock
         if self.action in ("approve", "reject", "cancel"):
             if not await try_lock(LeaveRequest, self.request_id, "status", "PROCESSING", "PENDING"):
-                await interaction.response.send_message("❌ Заявка уже обрабатывается.", ephemeral=True)
+                await interaction.response.send_message(f"❌ Заявка #{self.request_id} уже обрабатывается.", ephemeral=True)
                 return
         elif self.action == "annul":
             if not await try_lock(LeaveRequest, self.request_id, "status", "PROCESSING", "APPROVED"):
-                await interaction.response.send_message("❌ Заявка уже обрабатывается.", ephemeral=True)
+                await interaction.response.send_message(f"❌ Заявка #{self.request_id} уже обрабатывается.", ephemeral=True)
                 return
 
         match self.action:

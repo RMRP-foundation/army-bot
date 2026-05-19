@@ -44,7 +44,7 @@ class DismissalModal(discord.ui.Modal):
         )
         if existing:
             await interaction.response.send_message(
-                "❌ У вас уже есть активный рапорт.", ephemeral=True
+                f"❌ У вас уже есть активный рапорт #{existing.id}.", ephemeral=True
             )
             return
 
@@ -78,11 +78,18 @@ class DismissalModal(discord.ui.Modal):
             for pos in positions
             if pos.privilege.value >= 2 and pos.role_id
         ]
-        await interaction.channel.send(
-            content=f"||<@{interaction.user.id}>{''.join(mentions)}||",
-            embed=embed,
-            view=DismissalManagementView(request.id),
-        )
+        try:
+            await interaction.channel.send(
+                content=f"||<@{interaction.user.id}>{''.join(mentions)}||",
+                embed=embed,
+                view=DismissalManagementView(request.id),
+            )
+        except Exception:
+            await request.delete()
+            await interaction.edit_original_response(
+                content="❌ Не удалось отправить рапорт в канал. Попробуйте ещё раз."
+            )
+            return
 
         from cogs.dismissal import update_bottom_message
 

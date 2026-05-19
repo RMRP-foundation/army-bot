@@ -93,7 +93,7 @@ class TransferApply(
         )
         if opened_request is not None:
             await interaction.response.send_message(
-                "### У вас уже есть открытое заявление на рассмотрении.\n"
+                f"### У вас уже есть открытое заявление #{opened_request.id} на рассмотрении.\n"
                 "Ожидайте его рассмотрения.",
                 ephemeral=True,
             )
@@ -362,7 +362,7 @@ class RejectTransferButton(
         async def on_modal_submit(modal_interaction: discord.Interaction):
             from utils.mongo_lock import try_lock
             if not await try_lock(TransferRequest, self.request_id, "status", "PROCESSING", old_status):
-                await modal_interaction.response.send_message("❌ Запрос уже обрабатывается.", ephemeral=True)
+                await modal_interaction.response.send_message(f"❌ Запрос #{self.request_id} уже обрабатывается.", ephemeral=True)
                 return
 
             reason = reason_input.value

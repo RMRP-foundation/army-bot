@@ -47,7 +47,7 @@ async def _check_can_apply(interaction: discord.Interaction, check_blacklist: bo
     )
     if processing is not None:
         await interaction.response.send_message(
-            "### ⏳ Ваша заявка сейчас рассматривается офицером.\nПодождите завершения.",
+            f"### ⏳ Ваша заявка #{processing.id} сейчас рассматривается офицером.\nПодождите завершения.",
             ephemeral=True,
         )
         return False
@@ -61,7 +61,7 @@ async def _check_can_apply(interaction: discord.Interaction, check_blacklist: bo
         if age < config.ROLE_RESUBMIT_COOLDOWN:
             retry_at = pending.sent_at.replace(tzinfo=datetime.timezone.utc) + config.ROLE_RESUBMIT_COOLDOWN
             await interaction.response.send_message(
-                f"### ⏳ Заявка уже подана\n"
+                f"### ⏳ Заявка #{pending.id} уже подана\n"
                 f"Повторно подать можно {discord.utils.format_dt(retry_at, 'R')}, "
                 f"если текущая не будет рассмотрена.",
                 ephemeral=True,
@@ -260,7 +260,7 @@ class RoleManagementButton(
         from utils.mongo_lock import try_lock
 
         if not await try_lock(RoleRequest, self.request_id, "status", "PROCESSING", "PENDING"):
-            await interaction.edit_original_response(content="❌ Заявка не найдена или уже обработана.")
+            await interaction.edit_original_response(content=f"❌ Заявка #{self.request_id} не найдена или уже обработана.")
             return
 
         request = await RoleRequest.find_one(RoleRequest.id == self.request_id)

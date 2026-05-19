@@ -175,6 +175,7 @@ async def restore_leave_timers(bot: Bot):
         if now >= end_t:
             await _expire_leave(bot, req.id)
         elif now >= start_t:
+            await _activate_leave(bot, req.id)
             await schedule_leave_expiry(bot, req)
         else:
             await schedule_leave_activation(bot, req)

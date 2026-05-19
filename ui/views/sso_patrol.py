@@ -33,7 +33,7 @@ class SSOPatrolManagementButton(discord.ui.DynamicItem[discord.ui.Button],
     async def callback(self, interaction: discord.Interaction):
         from utils.mongo_lock import try_lock
         if not await try_lock(SSOPatrolRequest, self.request_id, "status", "PROCESSING", "PENDING"):
-            return await interaction.response.send_message("### ❌ Заявление уже обработано.", ephemeral=True)
+            return await interaction.response.send_message(f"### ❌ Заявление #{self.request_id} уже обработано.", ephemeral=True)
 
         user = await get_initiator(interaction)
         div_info = divisions.get_division(user.division) if user else None

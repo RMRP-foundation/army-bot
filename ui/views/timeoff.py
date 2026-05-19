@@ -25,7 +25,7 @@ async def _check_can_apply(interaction: discord.Interaction) -> bool:
     )
     if opened_request is not None:
         await interaction.response.send_message(
-            "### У вас уже есть открытое заявление на рассмотрении.\nОжидайте его рассмотрения.",
+            f"### У вас уже есть открытое заявление #{opened_request.id} на рассмотрении.\nОжидайте его рассмотрения.",
             ephemeral=True,
         )
         return False

@@ -126,7 +126,7 @@ class DismissalManagementButton(
 
         from utils.mongo_lock import try_lock
         if not await try_lock(DismissalRequest, self.request_id, "status", "PROCESSING", "PENDING"):
-            await interaction.edit_original_response(content="❌ Заявка не найдена или уже обработана.")
+            await interaction.edit_original_response(content=f"❌ Заявка #{self.request_id} не найдена или уже обработана.")
             return
 
         officer = await get_initiator(interaction)

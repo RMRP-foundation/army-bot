@@ -74,10 +74,8 @@ async def handle_approve(interaction: discord.Interaction, req: SupplyRequest):
             remaining = cooldown_time - datetime.datetime.now()
             hours, remainder = divmod(int(remaining.total_seconds()), 3600)
             minutes, _ = divmod(remainder, 60)
-            await interaction.response.send_message(
-                f"❌ У пользователя КД на получение склада. "
-                f"Осталось: {hours}ч {minutes}м.",
-                ephemeral=True,
+            await interaction.edit_original_response(
+                content=f"❌ У пользователя КД на получение склада. Осталось: {hours}ч {minutes}м."
             )
             return
 
@@ -101,10 +99,8 @@ async def handle_approve(interaction: discord.Interaction, req: SupplyRequest):
         await other.save()
 
     embed = await req.to_embed(interaction.client)
-    await interaction.response.edit_message(embed=embed, view=None)
-    await interaction.followup.send(
-        f"✅ Заявка #{req.id} одобрена. КД установлено.", ephemeral=True
-    )
+    await interaction.message.edit(embed=embed, view=None)
+    await interaction.edit_original_response(content=f"✅ Заявка #{req.id} одобрена. КД установлено.")
 
     try:
         embed_audit = discord.Embed(
@@ -143,8 +139,8 @@ async def handle_reject(interaction: discord.Interaction, req: SupplyRequest):
     await req.save()
 
     embed = await req.to_embed(interaction.client)
-    await interaction.response.edit_message(embed=embed, view=None)
-    await interaction.followup.send(f"❌ Заявка #{req.id} отклонена.", ephemeral=True)
+    await interaction.message.edit(embed=embed, view=None)
+    await interaction.edit_original_response(content=f"❌ Заявка #{req.id} отклонена.")
 
 
 async def handle_edit(interaction: discord.Interaction, req: SupplyRequest):
@@ -152,7 +148,7 @@ async def handle_edit(interaction: discord.Interaction, req: SupplyRequest):
     embed = await req.to_embed(interaction.client)
     embed.title = f"🛠 Редактирование заявки #{req.id}"
     embed.set_footer(text="Режим редактирования (Майор+)")
-    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+    await interaction.edit_original_response(embed=embed, view=view)
 
 
 class ItemSelectView(discord.ui.View):
@@ -324,7 +320,7 @@ class SupplyBuilderView(discord.ui.View):
                     remaining = cooldown_time - datetime.datetime.now()
                     hours, remainder = divmod(int(remaining.total_seconds()), 3600)
                     minutes, _ = divmod(remainder, 60)
-                    await interaction.response.send_message(
+                    await interaction.followup.send(
                         f"❌ У вас КД на получение склада. "
                         f"Осталось: {hours}ч {minutes}м.",
                         ephemeral=True,
@@ -390,16 +386,16 @@ class SupplyManageButton(
         return cls(match.group("action"), int(match.group("id")))
 
     async def callback(self, interaction: Interaction) -> None:
+        await interaction.response.send_message("⏳ Выполняются действия...", ephemeral=True)
+
         req = await SupplyRequest.find_one(SupplyRequest.id == self.request_id)
         if not req:
-            await interaction.response.send_message(
-                "❌ Заявка не найдена в базе данных.", ephemeral=True
-            )
+            await interaction.edit_original_response(content=f"❌ Заявка #{self.request_id} не найдена в базе данных.")
             return
 
         if req.status != "PENDING":
-            await interaction.response.send_message(
-                f"❌ Эта заявка уже обработана (Статус: {req.status}).", ephemeral=True
+            await interaction.edit_original_response(
+                content=f"❌ Заявка #{self.request_id} уже обработана (Статус: {req.status})."
             )
             return
 
@@ -407,18 +403,16 @@ class SupplyManageButton(
 
         if self.action == "edit":
             if user.discord_id != req.user_id and (user.rank or 0) < config.RankIndex.MAJOR:
-                await interaction.response.send_message(
-                    "❌ У вас недостаточно прав для этого действия (Требуется: Майор+).",
-                    ephemeral=True,
+                await interaction.edit_original_response(
+                    content="❌ У вас недостаточно прав для этого действия (Требуется: Майор+)."
                 )
                 return
             await handle_edit(interaction, req)
             return
 
         if (user.rank or 0) < config.RankIndex.MAJOR:
-            await interaction.response.send_message(
-                "❌ У вас недостаточно прав для этого действия (Требуется: Майор+).",
-                ephemeral=True,
+            await interaction.edit_original_response(
+                content="❌ У вас недостаточно прав для этого действия (Требуется: Майор+)."
             )
             return
 

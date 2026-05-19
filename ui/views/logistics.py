@@ -1,4 +1,5 @@
 import discord
+from aiohttp import request
 
 from discord.ui import Separator
 
@@ -61,7 +62,7 @@ class LogisticsManagementButton(discord.ui.DynamicItem[discord.ui.Button],
     async def callback(self, interaction: discord.Interaction):
         from utils.mongo_lock import try_lock
         if not await try_lock(LogisticsRequest, self.request_id, "status", "PROCESSING", "PENDING"):
-            return await interaction.response.send_message("❌ Запрос уже обработан.", ephemeral=True)
+            return await interaction.response.send_message(f"❌ Запрос #{self.request_id} уже обработан.", ephemeral=True)
 
         is_supplier =any(r.id == config.RoleId.SUPPLIER.value for r in interaction.user.roles)
         is_staff = await is_high_command(interaction.user.id)

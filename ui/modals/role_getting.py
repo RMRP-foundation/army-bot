@@ -39,7 +39,7 @@ async def _reject_stale_pending(interaction: discord.Interaction) -> bool:
     if age < config.ROLE_RESUBMIT_COOLDOWN:
         retry_at = old_pending.sent_at.replace(tzinfo=datetime.timezone.utc) + config.ROLE_RESUBMIT_COOLDOWN
         await interaction.response.send_message(
-            f"### ⏳ Заявка уже подана\n"
+            f"### ⏳ Заявка #{old_pending.id} уже подана\n"
             f"Повторно подать можно {discord.utils.format_dt(retry_at, 'R')}, "
             f"если текущая не будет рассмотрена.",
             ephemeral=True,
@@ -53,7 +53,7 @@ async def _reject_stale_pending(interaction: discord.Interaction) -> bool:
 
     if result.modified_count == 0:
         await interaction.response.send_message(
-            "### ⏳ Заявка уже подана\nПодождите завершения.",
+            f"### ⏳ Заявка #{old_pending.id} уже подана\nПодождите завершения.",
             ephemeral=True,
         )
         return False
