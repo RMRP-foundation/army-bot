@@ -1,5 +1,4 @@
 import discord
-from aiohttp import request
 
 from discord.ui import Separator
 
