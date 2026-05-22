@@ -725,8 +725,13 @@ class LeaveRequest(Document):
 
         e.add_field(name="Причина", value=self.reason, inline=False)
 
-        if self.reviewer_id:
-            e.add_field(name="Рассмотрел", value=f"<@{self.reviewer_id}>", inline=True)
+        if self.reviewer_id and (approved_at := to_utc(self.approved_at)):
+            e.add_field(
+                name="Рассмотрел",
+                value=(f"<@{self.reviewer_id}> "
+                      f"{discord.utils.format_dt(approved_at, 'R')}"),
+                inline=True
+            )
 
         if self.annuller_id and (annulled_at := to_utc(self.annulled_at)):
             e.add_field(
