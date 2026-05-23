@@ -144,10 +144,9 @@ async def schedule_leave_expiry(bot: Bot, request: LeaveRequest):
 
 def cancel_leave_timer(request_id: int):
     """Отменяет таймеры активации и завершения отпуска."""
-    for timers in (_leave_timers, _leave_activation_timers):
-        task = timers.pop(request_id, None)
-        if task and not task.done():
-            task.cancel()
+    task = _leave_timers.pop(request_id, None)
+    if task and not task.done():
+        task.cancel()
 
 
 async def restore_leave_timers(bot: Bot):
