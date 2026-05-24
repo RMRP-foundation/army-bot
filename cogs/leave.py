@@ -37,6 +37,9 @@ async def _activate_leave(bot: Bot, request_id: int):
     user_db = await User.find_one(User.discord_id == request.user_id)
 
     if member and user_db:
+        if user_db.leave_status == request.leave_type.value:
+            return
+
         user_db.leave_status = request.leave_type.value
         await user_db.save()
 
