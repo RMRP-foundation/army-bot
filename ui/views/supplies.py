@@ -273,7 +273,7 @@ class SupplyBuilderView(discord.ui.View):
         await self.refresh_embed(interaction)
 
     async def cancel_callback(self, interaction: discord.Interaction):
-        if not self.is_edit_mode:
+        if not self.is_edit_mode and self.request.status == "DRAFT":
             await self.request.delete()
         await interaction.response.edit_message(
             content="❌ Действие отменено.", embed=None, view=None
@@ -347,6 +347,10 @@ class SupplyBuilderView(discord.ui.View):
 
                 await update_bottom_message(interaction.client)
 
+            try:
+                await self.original_interaction.delete_original_response()
+            except discord.NotFound:
+                pass
             await interaction.edit_original_response(content="✅ Заявка успешно отправлена!")
 
 
