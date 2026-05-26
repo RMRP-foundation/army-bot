@@ -7,6 +7,7 @@ from discord import Interaction
 from discord._types import ClientT
 
 import config
+from cogs.leave import cancel_activation_timer
 from database.models import LeaveRequest, LeaveType, User
 from texts import (
     ic_leave_description,
@@ -376,6 +377,7 @@ class LeaveManagementButton(
 
         from cogs.leave import cancel_leave_timer
         cancel_leave_timer(request.id)
+        cancel_activation_timer(request.id)
 
         embed = await request.to_embed()
         await interaction.response.edit_message(

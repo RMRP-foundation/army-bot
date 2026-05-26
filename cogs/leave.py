@@ -151,6 +151,11 @@ def cancel_leave_timer(request_id: int):
     if task and not task.done():
         task.cancel()
 
+def cancel_activation_timer(request_id: int):
+    task = _leave_activation_timers.pop(request_id, None)
+    if task and not task.done():
+        task.cancel()
+
 
 async def restore_leave_timers(bot: Bot):
     """Восстанавливает таймеры всех активных отпусков при запуске бота."""
