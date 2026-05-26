@@ -17,14 +17,14 @@ logger = logging.getLogger(__name__)
 
 class MembersBrowser(discord.ui.LayoutView):
     def __init__(self, guild: discord.Guild, members: list[tuple[int, User]], division_info, members_per_page: int = 25):
-        super().__init__(timeout=300)
+        super().__init__(timeout=600)
         self.guild = guild
         self.members = members
         self.division_info = division_info
         self.per_page = members_per_page
         self.current_page = 0
-        self.total_pages = math.ceil(len(members) / members_per_page)
-
+        self.show_overdue_only = False
+        self.show_warning_only = False
         self.render_page()
 
     def _format_member(self, i: int, u: User) -> str:
@@ -36,27 +36,54 @@ class MembersBrowser(discord.ui.LayoutView):
                 and u.invited_at is not None
                 and (discord.utils.utcnow() - u.invited_at.replace(tzinfo=datetime.timezone.utc)).days > ACADEMY_DAYS_LIMIT
         )
+        no_date = (
+                abbr is not None
+                and abbr.lower() == "ва"
+                and u.invited_at is None
+        )
         return (
             f"{i}. {RANK_EMOJIS[u.rank or 0]} "
             f"`{format_game_id(u.static) if u.static else 'N // A'}` "
-            f"<@{u.discord_id}>{' ⚠️' if not self.guild.get_member(u.discord_id) else ''}{' ⏰' if overdue else ''} "
+            f"<@{u.discord_id}>{' ⚠️' if not self.guild.get_member(u.discord_id) else ''}{' ⏰' if overdue else ''}{' ❓' if no_date else ''} "
             f"❯ {u.full_name or 'Без имени'} "
             f"❯ {u.position or 'Без должности'}"
         )
 
+    @property
+    def _active_members(self):
+        members = self.members
+        if self.show_overdue_only:
+            abbr = getattr(self.division_info, "abbreviation", None)
+            if abbr and abbr.lower() == "ва":
+                members = [
+                    (i, u) for i, u in members
+                    if u.invited_at is None
+                       or (discord.utils.utcnow() - u.invited_at.replace(
+                        tzinfo=datetime.timezone.utc)).days > ACADEMY_DAYS_LIMIT
+                ]
+        if self.show_warning_only:
+            members = [
+                (i, u) for i, u in members
+                if not self.guild.get_member(u.discord_id)
+            ]
+        return members
+
     def render_page(self):
         self.clear_items()
+        self.total_pages = math.ceil(len(self._active_members) / self.per_page) or 1
 
         start = self.current_page * self.per_page
         end = start + self.per_page
-        current_slice = self.members[start:end]
+        current_slice = self._active_members[start:end]
 
         header_text = (
             f"## {self.division_info.emoji or ''} {self.division_info.name}: "
-            f"{min(len(self.members), end)}/{len(self.members)} участников"
+            f"{min(len(self._active_members), end)}/{len(self._active_members)} участников"
         )
 
         members_text = "\n".join([self._format_member(i, u) for i, u in current_slice])
+        if not members_text:
+            members_text = "Нет участников."
 
         container = discord.ui.Container()
         container.add_item(discord.ui.TextDisplay(header_text))
@@ -83,6 +110,22 @@ class MembersBrowser(discord.ui.LayoutView):
         btn_next.callback = self.on_next
         action_row.add_item(btn_next)
 
+        abbr = getattr(self.division_info, "abbreviation", None)
+
+        if abbr and abbr.lower() == "ва":
+            btn_overdue = discord.ui.Button(
+                emoji="⏰",
+                style=discord.ButtonStyle.danger if self.show_overdue_only else discord.ButtonStyle.gray,
+            )
+            btn_overdue.callback = self.on_toggle_overdue
+            action_row.add_item(btn_overdue)
+
+        btn_warning = discord.ui.Button(
+            emoji="⚠️",
+            style=discord.ButtonStyle.danger if self.show_warning_only else discord.ButtonStyle.gray,
+        )
+        btn_warning.callback = self.on_toggle_warning
+        action_row.add_item(btn_warning)
         container.add_item(action_row)
 
         self.add_item(container)
@@ -98,6 +141,18 @@ class MembersBrowser(discord.ui.LayoutView):
             self.current_page += 1
             self.render_page()
             await interaction.response.edit_message(view=self)
+
+    async def on_toggle_overdue(self, interaction: discord.Interaction):
+        self.show_overdue_only = not self.show_overdue_only
+        self.current_page = 0
+        self.render_page()
+        await interaction.response.edit_message(view=self)
+
+    async def on_toggle_warning(self, interaction: discord.Interaction):
+        self.show_warning_only = not self.show_warning_only
+        self.current_page = 0
+        self.render_page()
+        await interaction.response.edit_message(view=self)
 
 class Members(commands.Cog):
     def __init__(self, bot: Bot):
