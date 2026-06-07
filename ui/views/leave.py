@@ -7,7 +7,6 @@ from discord import Interaction
 from discord._types import ClientT
 
 import config
-from cogs.leave import cancel_activation_timer
 from database.models import LeaveRequest, LeaveType, User
 from texts import (
     ic_leave_description,
@@ -375,7 +374,7 @@ class LeaveManagementButton(
                     request.leave_type, original_nick=request.original_nick,
                 )
 
-        from cogs.leave import cancel_leave_timer
+        from cogs.leave import cancel_leave_timer, cancel_activation_timer
         cancel_leave_timer(request.id)
         cancel_activation_timer(request.id)
 

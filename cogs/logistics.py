@@ -1,5 +1,6 @@
 import asyncio
 import datetime
+import logging
 from discord.ext import commands, tasks
 import config
 from bot import Bot
@@ -7,6 +8,8 @@ from database.models import LogisticsRequest
 from ui.views.logistics import LogisticsApplyView
 from utils.bottom_message import update_bottom_message as _update_bottom_message
 from utils.permissions import has_update_permission
+
+logger = logging.getLogger(__name__)
 
 # 03:00 MSK = 00:00 UTC
 RESTART_TIME = datetime.time(hour=0, minute=0, tzinfo=datetime.timezone.utc)
@@ -44,7 +47,8 @@ class Logistics(commands.Cog):
                 try:
                     msg = await channel.fetch_message(req.message_id)
                     await msg.edit(embed=await req.to_embed(), view=None)
-                except:
+                except Exception as e:
+                    logger.error(f"Error updating logistics message #{req.id}: {e}")
                     continue
             await asyncio.sleep(1)
 

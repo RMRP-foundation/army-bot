@@ -1,7 +1,6 @@
 import datetime
 import discord
 import config
-from cogs.leave import cancel_activation_timer
 from database.models import User, Blacklist, LeaveRequest
 from utils.user_data import format_game_id
 
@@ -86,7 +85,7 @@ async def cleanup_user_leaves(bot, user_id: int):
         user_db.leave_status = None
         await user_db.save()
 
-        from cogs.leave import cancel_leave_timer
+        from cogs.leave import cancel_leave_timer, cancel_activation_timer
         cancel_leave_timer(req.id)
         cancel_activation_timer(req.id)
 
