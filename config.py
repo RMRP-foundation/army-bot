@@ -258,7 +258,7 @@ class RankIndex:
     ARMY_GENERAL = 18  # Генерал армии
 
 
-SUPPLY_INFO_LINK = "https://discord.com/channels/1245655012550512670/1251166871064019015/1460964263140003860"
+SUPPLY_INFO_LINK = "https://discord.com/channels/1245655012550512670/1251166871064019015/1513926242183680145"
 
 CAPTAIN_RANK_INDEX = RankIndex.CAPTAIN
 nickname_regex = re.compile("^([А-яЁё][а-яё]+) ([А-яЁё][а-яё]+)$")
