@@ -18,6 +18,9 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
+logging.getLogger("discord.client").addFilter(
+    lambda r: "PyNaCl" not in r.getMessage()
+)
 
 def main():
     token = config.TOKEN
