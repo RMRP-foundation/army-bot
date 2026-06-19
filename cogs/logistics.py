@@ -11,8 +11,8 @@ from utils.permissions import has_update_permission
 
 logger = logging.getLogger(__name__)
 
-# 03:00 MSK = 00:00 UTC
-RESTART_TIME = datetime.time(hour=0, minute=0, tzinfo=datetime.timezone.utc)
+# 03:10 MSK = 00:10 UTC
+RESTART_TIME = datetime.time(hour=0, minute=10, tzinfo=datetime.timezone.utc)
 channel_id = config.CHANNELS["logistics"]
 
 async def update_bottom_message(bot: Bot):
