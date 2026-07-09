@@ -627,13 +627,13 @@ class UserEdit(commands.Cog):
                                 )
                                 return
 
-                await interaction.response.edit_message(
-                    view=self.build_view(user, user_info)
-                )
-
                 old_position = user_info.position
                 user_info.position = new_position_name
                 await user_info.save()
+
+                await interaction.response.edit_message(
+                    view=self.build_view(user, user_info)
+                )
 
                 if old_position != user_info.position:
                     await audit_logger.log_action(
