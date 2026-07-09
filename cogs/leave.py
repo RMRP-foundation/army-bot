@@ -15,7 +15,6 @@ from ui.views.leave import (
 )
 from utils.bottom_message import update_bottom_message as _update_bottom_message
 from utils.notifications import notify_leave_expired
-from utils.permissions import has_update_permission
 
 logger = logging.getLogger(__name__)
 
@@ -204,7 +203,7 @@ class Leave(commands.Cog):
         self.bot = bot
 
     @commands.command(name="refresh_leave")
-    @has_update_permission()
+    @commands.is_owner()
     async def refresh_leave(self, ctx: commands.Context):
         if ctx.channel.id == ic_channel_id:
             await update_bottom_message(self.bot, LeaveType.IC)

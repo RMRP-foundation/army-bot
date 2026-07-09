@@ -2,7 +2,6 @@ from discord.ext import commands
 from beanie import Document
 import database.models
 
-from utils.permissions import has_update_permission
 from database.models import User
 
 
@@ -11,7 +10,7 @@ class Admin(commands.Cog):
         self.bot = bot
 
     @commands.command(name="reset_processing")
-    @has_update_permission()
+    @commands.is_owner()
     async def reset_processing_cmd(self, ctx, scope: str = None, request_id: int = None):
         if scope is None:
             await self.bot.reset_processing()
@@ -53,7 +52,7 @@ class Admin(commands.Cog):
         await ctx.message.add_reaction("✅" if modified else "⚠️")
 
     @commands.command(name="reset_division")
-    @has_update_permission()
+    @commands.is_owner()
     async def reset_division_cmd(self, ctx, discord_id: int):
         user = await User.find_one(database.models.User.discord_id == discord_id)
         if user:

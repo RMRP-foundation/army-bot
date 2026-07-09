@@ -3,7 +3,6 @@ import config
 from bot import Bot
 from ui.views.materials import MaterialsReportView
 from utils.bottom_message import update_bottom_message as _update_bottom_message
-from utils.permissions import has_update_permission
 
 channel_id = config.CHANNELS["materials"]
 
@@ -15,7 +14,7 @@ class MaterialsReportCog(commands.Cog):
         self.bot = bot
 
     @commands.command(name="refresh_materials")
-    @has_update_permission()
+    @commands.is_owner()
     async def refresh_materials(self, ctx: commands.Context):
         if ctx.channel.id != channel_id:
             return

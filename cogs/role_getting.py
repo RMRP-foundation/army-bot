@@ -4,7 +4,6 @@ import config
 from bot import Bot
 from ui.views.role_getting import RoleApplyView
 from utils.bottom_message import update_bottom_message as _update_bottom_message
-from utils.permissions import has_update_permission
 
 channel_id = config.CHANNELS["role_getting"]
 
@@ -18,7 +17,7 @@ class RoleGetting(commands.Cog):
         self.bot = bot
 
     @commands.command(name="refresh_roles")
-    @has_update_permission()
+    @commands.is_owner()
     async def update_command(self, ctx: commands.Context):
         if ctx.channel.id != channel_id:
             return

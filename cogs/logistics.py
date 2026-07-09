@@ -7,7 +7,6 @@ from bot import Bot
 from database.models import LogisticsRequest
 from ui.views.logistics import LogisticsApplyView
 from utils.bottom_message import update_bottom_message as _update_bottom_message
-from utils.permissions import has_update_permission
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +52,7 @@ class Logistics(commands.Cog):
             await asyncio.sleep(1)
 
     @commands.command(name="refresh_logistics")
-    @has_update_permission()
+    @commands.is_owner()
     async def update_command(self, ctx: commands.Context):
         if ctx.channel.id != channel_id:
             return
