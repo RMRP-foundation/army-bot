@@ -5,6 +5,11 @@ from .dismissal import (
 )
 from .leave import ICLeaveApplyView, OOCLeaveApplyView, LeaveManagementButton
 from .logistics import LogisticsApplyView, LogisticsManagementButton
+from .promotion import (
+    PromoteButton,
+    PromotionApplyView,
+    PromotionManagementButton,
+)
 from .materials import MaterialsReportView
 from .reinstatement import (
     ApproveReinstatementButton,
@@ -40,6 +45,7 @@ def load_persistent_views(bot):
     bot.add_view(LogisticsApplyView())
     bot.add_view(ICLeaveApplyView())
     bot.add_view(OOCLeaveApplyView())
+    bot.add_view(PromotionApplyView())
 
 
 def load_buttons(bot):
@@ -60,6 +66,8 @@ def load_buttons(bot):
         SSOPatrolManagementButton,
         LogisticsManagementButton,
         LeaveManagementButton,
+        PromotionManagementButton,
+        PromoteButton,
         RoleLegacyButton,  # Временная
         TimeoffLegacyButton,  # Временная
     )

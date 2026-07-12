@@ -32,6 +32,9 @@ class Division(Document):
     description: str | None = None
     emoji: str | None = None
     positions: list[Position] | None = None
+    promotion_channel: int | None = None
+    promotion_min_rank_review: int | None = None
+    promotion_reviewer_division_id: int | None = None
 
     def get_position_by_name(self, name: str) -> Position | None:
         if not self.positions:
@@ -748,6 +751,56 @@ class LeaveRequest(Document):
 
     class Settings:
         name = "leave_requests"
+
+
+class PromotionReport(Document):
+    id: int
+    user_id: int
+    division_id: int
+    current_rank: int
+    target_rank: int
+    evidence: str
+    score: str | None = None
+    reject_reason: str | None = None
+    status: str = "PENDING"  # PENDING, APPROVED, PROMOTED, REJECTED, CANCELLED
+    reviewer_id: int | None = None
+    promoted_by: int | None = None
+    created_at: datetime.datetime = Field(default_factory=datetime.datetime.now)
+    message_id: int | None = None
+
+    async def to_embed(self, bot) -> discord.Embed:
+        status_map = {
+            "PENDING":   ("⏳", discord.Color.gold(),       "На рассмотрении"),
+            "APPROVED":  ("✅", discord.Color.blurple(),    "Одобрен"),
+            "PROMOTED":  ("🎖️", discord.Color.dark_green(), "Повышен"),
+            "REJECTED":  ("❌", discord.Color.dark_red(),   "Отклонён"),
+        }
+        emoji, color, label = status_map.get(self.status, ("❓", discord.Color.default(), "Неизвестно"))
+
+        requester = await User.find_one(User.discord_id == self.user_id)
+
+        e = discord.Embed(
+            title=f"{emoji} Рапорт #{self.id} — {label}",
+            color=color,
+            timestamp=self.created_at,
+        )
+        e.add_field(name="Имя Фамилия", value=requester.full_name, inline=True)
+        e.add_field(name="Статик", value=format_game_id(requester.static), inline=True)
+        e.add_field(name="Звание", value=f"{display_rank(self.current_rank)}  ⟶ {display_rank(self.target_rank)}", inline=False)
+        e.add_field(name="Доказательства", value=self.evidence, inline=False)
+        if self.score:
+            e.add_field(name="Баллы", value=self.score, inline=False)
+        if self.reject_reason:
+            e.add_field(name="Причина отказа", value=self.reject_reason, inline=False)
+        if self.reviewer_id:
+            e.add_field(name="Проверил", value=f"<@{self.reviewer_id}>", inline=True)
+        if self.promoted_by:
+            e.add_field(name="Повысил", value=f"<@{self.promoted_by}>", inline=True)
+        return e
+
+    class Settings:
+        name = "promotion_reports"
+
 
 class BottomMessage(Document):
     channel_id: Indexed(int, unique=True)

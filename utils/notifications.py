@@ -256,3 +256,22 @@ async def notify_leave_cancelled(bot, user_id: int, request) -> bool:
         color=discord.Color.dark_red(),
     )
     return await _send_dm(bot, user_id, embed)
+
+async def notify_promotion_approved(bot, user_id: int) -> bool:
+    """Уведомление об одобрении рапорта на повышение."""
+    embed = discord.Embed(
+        title=f"{action_emojis[AuditAction.PROMOTED]} Рапорт одобрен",
+        description="Ваш рапорт на повышение был одобрен.",
+        color=discord.Color.green(),
+    )
+    return await _send_dm(bot, user_id, embed)
+
+
+async def notify_promotion_rejected(bot, user_id: int, reason: str) -> bool:
+    """Уведомление об отклонении рапорта на повышение."""
+    embed = discord.Embed(
+        title=f"{action_emojis[AuditAction.PROMOTED]} Рапорт отклонён",
+        description=f"Ваш рапорт на повышение был отклонён.\n\n**Причина:** {reason}",
+        color=discord.Color.red(),
+    )
+    return await _send_dm(bot, user_id, embed)
