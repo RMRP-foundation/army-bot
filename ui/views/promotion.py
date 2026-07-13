@@ -290,7 +290,7 @@ async def _promotion_apply_callback(interaction: discord.Interaction):
 
     if user_db.rank >= config.RankIndex.CAPTAIN:
         return await interaction.response.send_message(
-            "❌ Повышение через рапорт доступно только до звания Майор.",
+            "❌ Повышение через рапорт доступно только до звания Капитан.",
             ephemeral=True,
         )
 
