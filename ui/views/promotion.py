@@ -4,7 +4,7 @@ from discord._types import ClientT
 
 import config
 from database import divisions
-from database.models import PromotionReport, User
+from database.models import PromotionRequest, User
 from texts import promotion_title, promotion_description
 from ui.views.indicators import indicator_view
 from utils.audit import AuditAction, audit_logger
@@ -14,7 +14,7 @@ from utils.roles import to_rank
 from utils.user_data import get_initiator
 
 
-def _can_approve(approver: User, div, report: PromotionReport) -> tuple[bool, str]:
+def _can_approve(approver: User, div, report: PromotionRequest) -> tuple[bool, str]:
     if (approver.rank or 0) >= config.RankIndex.COLONEL:
         return True, ""
 
@@ -55,32 +55,11 @@ def _can_promote(promoter: User, div) -> tuple[bool, str]:
 
     return True, ""
 
-
-async def _do_promote(interaction: discord.Interaction, report: PromotionReport):
-    user_db = await User.find_one(User.discord_id == report.user_id)
-    if not user_db:
-        await interaction.followup.send("❌ Пользователь не найден в БД.", ephemeral=True)
-        return
-
-    user_db.rank = report.target_rank
-    await user_db.save()
-
-    member = await interaction.client.getch_member(report.user_id)
-    if member:
-        new_roles = to_rank(member.roles, user_db.rank)
-        await member.edit(
-            nick=user_db.discord_nick,
-            roles=new_roles,
-            reason=f"Повышение по рапорту #{report.id} by {interaction.user.id}",
-        )
-
-    await audit_logger.log_action(
-        action=AuditAction.PROMOTED,
-        initiator=interaction.user,
-        target=report.user_id,
-    )
-
-    await notify_promoted(interaction.client, report.user_id, config.RANKS[report.target_rank])
+def _promotion_view(report_id: int, *actions: str) -> discord.ui.View:
+    view = discord.ui.View(timeout=None)
+    for action in actions:
+        view.add_item(PromoteButton(report_id) if action == "promote" else PromotionManagementButton(action, report_id))
+    return view
 
 
 class PromotionManagementButton(
@@ -110,12 +89,12 @@ class PromotionManagementButton(
     async def from_custom_id(cls, interaction, item, match):
         return cls(match.group("action"), int(match.group("id")))
 
-    async def _handle_approve(self, interaction: discord.Interaction, report: PromotionReport):
+    async def _handle_approve(self, interaction: discord.Interaction, report: PromotionRequest):
         approver = await get_initiator(interaction)
         div = divisions.get_division(report.division_id)
         ok, err = _can_approve(approver, div, report)
         if not ok:
-            await PromotionReport.get_pymongo_collection().update_one(
+            await PromotionRequest.get_pymongo_collection().update_one(
                 {"_id": self.report_id}, {"$set": {"status": "PENDING"}}
             )
             return await interaction.response.send_message(err, ephemeral=True)
@@ -124,8 +103,7 @@ class PromotionManagementButton(
         report.reviewer_id = interaction.user.id
         await report.save()
 
-        view = discord.ui.View(timeout=None)
-        view.add_item(PromoteButton(report.id))
+        view = _promotion_view(report.id, "promote", "reject")
 
         await interaction.response.edit_message(
             content=f"-# ||<@{report.user_id}> <@{interaction.user.id}>||",
@@ -135,14 +113,11 @@ class PromotionManagementButton(
 
         await notify_promotion_approved(interaction.client, report.user_id)
 
-    async def _handle_reject(self, interaction: discord.Interaction, report: PromotionReport):
+    async def _handle_reject(self, interaction: discord.Interaction, report: PromotionRequest):
         approver = await get_initiator(interaction)
         div = divisions.get_division(report.division_id)
         ok, err = _can_approve(approver, div, report)
         if not ok:
-            await PromotionReport.get_pymongo_collection().update_one(
-                {"_id": self.report_id}, {"$set": {"status": "PENDING"}}
-            )
             return await interaction.response.send_message(err, ephemeral=True)
 
         modal = discord.ui.Modal(title="Отклонение рапорта на повышение")
@@ -156,25 +131,30 @@ class PromotionManagementButton(
         modal.add_item(reason_input)
 
         async def on_submit(modal_interaction: discord.Interaction):
+            if not await try_lock(PromotionRequest, self.report_id, "status", "PROCESSING", ["PENDING", "APPROVED"]):
+                return await modal_interaction.response.send_message(
+                    f"❌ Рапорт #{self.report_id} не найден или уже обработан.", ephemeral=True
+                )
+
             report.status = "REJECTED"
-            report.reviewer_id = interaction.user.id
+            report.reviewer_id = modal_interaction.user.id
             report.reject_reason = reason_input.value
             await report.save()
 
             await modal_interaction.response.edit_message(
-                content=f"-# ||<@{report.user_id}> <@{interaction.user.id}>||",
-                embed=await report.to_embed(interaction.client),
+                content=f"-# ||<@{report.user_id}> <@{modal_interaction.user.id}>||",
+                embed=await report.to_embed(modal_interaction.client),
                 view=indicator_view("Отклонён", emoji="👎"),
             )
 
-            await notify_promotion_rejected(interaction.client, report.user_id, reason_input.value)
+            await notify_promotion_rejected(modal_interaction.client, report.user_id, reason_input.value)
 
         modal.on_submit = on_submit
         await interaction.response.send_modal(modal)
 
-    async def _handle_cancel(self, interaction: discord.Interaction, report: PromotionReport):
+    async def _handle_cancel(self, interaction: discord.Interaction, report: PromotionRequest):
         if interaction.user.id != report.user_id:
-            await PromotionReport.get_pymongo_collection().update_one(
+            await PromotionRequest.get_pymongo_collection().update_one(
                 {"_id": self.report_id}, {"$set": {"status": "PENDING"}}
             )
             return await interaction.response.send_message(
@@ -188,21 +168,28 @@ class PromotionManagementButton(
         await interaction.message.delete()
 
     async def callback(self, interaction: Interaction[ClientT]):
-        expected = ["PENDING", "APPROVED"] if self.action == "reject" else "PENDING"
-        if not await try_lock(PromotionReport, self.report_id, "status", "PROCESSING", expected):
+        if self.action != "reject":
+            if not await try_lock(PromotionRequest, self.report_id, "status", "PROCESSING", "PENDING"):
+                return await interaction.response.send_message(
+                    f"❌ Рапорт #{self.report_id} не найден или уже обработан.", ephemeral=True
+                )
+
+            report = await PromotionRequest.find_one(PromotionRequest.id == self.report_id)
+
+            match self.action:
+                case "approve":
+                    await self._handle_approve(interaction, report)
+                case "cancel":
+                    await self._handle_cancel(interaction, report)
+            return
+
+        report = await PromotionRequest.find_one(PromotionRequest.id == self.report_id)
+        if not report or report.status not in ("PENDING", "APPROVED"):
             return await interaction.response.send_message(
                 f"❌ Рапорт #{self.report_id} не найден или уже обработан.", ephemeral=True
             )
 
-        report = await PromotionReport.find_one(PromotionReport.id == self.report_id)
-
-        match self.action:
-            case "approve":
-                await self._handle_approve(interaction, report)
-            case "reject":
-                await self._handle_reject(interaction, report)
-            case "cancel":
-                await self._handle_cancel(interaction, report)
+        await self._handle_reject(interaction, report)
 
 
 class PromoteButton(
@@ -213,7 +200,7 @@ class PromoteButton(
         super().__init__(
             discord.ui.Button(
                 label="Повысить",
-                emoji="🎖️",
+                emoji="⭐",
                 style=discord.ButtonStyle.primary,
                 custom_id=f"promotion:promote:{report_id}",
             )
@@ -225,18 +212,18 @@ class PromoteButton(
         return cls(int(match.group("id")))
 
     async def callback(self, interaction: Interaction[ClientT]):
-        if not await try_lock(PromotionReport, self.report_id, "status", "PROCESSING", "APPROVED"):
+        if not await try_lock(PromotionRequest, self.report_id, "status", "PROCESSING", "APPROVED"):
             return await interaction.response.send_message(
                 f"❌ Рапорт #{self.report_id} не найден или уже обработан.", ephemeral=True
             )
 
-        report = await PromotionReport.find_one(PromotionReport.id == self.report_id)
+        report = await PromotionRequest.find_one(PromotionRequest.id == self.report_id)
 
         member = await interaction.client.getch_member(report.user_id)
         if member:
             user_roles_ids = [role.id for role in member.roles]
             if any(rid in config.PENALTY_ROLES for rid in user_roles_ids) or config.INVESTIGATION_ROLE in user_roles_ids:
-                await PromotionReport.get_pymongo_collection().update_one(
+                await PromotionRequest.get_pymongo_collection().update_one(
                     {"_id": self.report_id}, {"$set": {"status": "APPROVED"}}
                 )
                 return await interaction.response.send_message(
@@ -248,10 +235,35 @@ class PromoteButton(
         div = divisions.get_division(report.division_id)
         ok, err = _can_promote(promoter, div)
         if not ok:
-            await PromotionReport.get_pymongo_collection().update_one(
+            await PromotionRequest.get_pymongo_collection().update_one(
                 {"_id": self.report_id}, {"$set": {"status": "APPROVED"}}
             )
             return await interaction.response.send_message(err, ephemeral=True)
+
+        user_db = await User.find_one(User.discord_id == report.user_id)
+        if user_db.rank is None:
+            report.status = "REJECTED"
+            report.reviewer_id = interaction.user.id
+            report.reject_reason = "Военнослужащий уволен."
+            await report.save()
+
+            await interaction.response.edit_message(
+                content=f"-# ||<@{report.user_id}> <@{interaction.user.id}>||",
+                embed=await report.to_embed(interaction.client),
+                view=indicator_view("Отклонён", emoji="👎"),
+            )
+            return
+
+        user_db.rank = report.target_rank
+        await user_db.save()
+
+        if member:
+            new_roles = to_rank(member.roles, user_db.rank)
+            await member.edit(
+                nick=user_db.discord_nick,
+                roles=new_roles,
+                reason=f"Повышение по рапорту #{report.id} by {interaction.user.id}",
+            )
 
         report.status = "PROMOTED"
         report.promoted_by = interaction.user.id
@@ -260,22 +272,15 @@ class PromoteButton(
         await interaction.response.edit_message(
             content=f"-# ||<@{report.user_id}> <@{report.reviewer_id}> <@{interaction.user.id}>||",
             embed=await report.to_embed(interaction.client),
-            view=indicator_view("Повышен", emoji="🎖️"),
+            view=indicator_view("Повышен", emoji="⭐"),
         )
 
-        await _do_promote(interaction, report)
-
-
-class PromotionManagementView(discord.ui.View):
-    def __init__(self, report_id: int):
-        super().__init__(timeout=None)
-        self.add_item(PromotionManagementButton("approve", report_id))
-        self.add_item(PromotionManagementButton("reject", report_id))
-        self.add_item(PromotionManagementButton("cancel", report_id))
+        await audit_logger.log_action(action=AuditAction.PROMOTED, initiator=interaction.user, target=report.user_id)
+        await notify_promoted(interaction.client, report.user_id, config.RANKS[report.target_rank])
 
 
 async def _promotion_apply_callback(interaction: discord.Interaction):
-    from ui.modals.promotion import PromotionReportModal
+    from ui.modals.promotion import PromotionRequestModal
 
     div = next(
         (d for d in divisions.divisions if d.promotion_channel == interaction.channel_id),
@@ -299,7 +304,7 @@ async def _promotion_apply_callback(interaction: discord.Interaction):
             "❌ Вы можете подавать рапорт только в своём подразделении.", ephemeral=True
         )
 
-    await interaction.response.send_modal(PromotionReportModal(div, user_db))
+    await interaction.response.send_modal(PromotionRequestModal(div, user_db))
 
 
 class PromotionApplyView(discord.ui.LayoutView):

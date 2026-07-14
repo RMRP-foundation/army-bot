@@ -753,7 +753,7 @@ class LeaveRequest(Document):
         name = "leave_requests"
 
 
-class PromotionReport(Document):
+class PromotionRequest(Document):
     id: int
     user_id: int
     division_id: int
@@ -772,7 +772,7 @@ class PromotionReport(Document):
         status_map = {
             "PENDING":   ("⏳", discord.Color.gold(),       "На рассмотрении"),
             "APPROVED":  ("✅", discord.Color.blurple(),    "Одобрен"),
-            "PROMOTED":  ("🎖️", discord.Color.dark_green(), "Повышен"),
+            "PROMOTED":  ("⭐", discord.Color.dark_green(), "Повышен"),
             "REJECTED":  ("❌", discord.Color.dark_red(),   "Отклонён"),
         }
         emoji, color, label = status_map.get(self.status, ("❓", discord.Color.default(), "Неизвестно"))

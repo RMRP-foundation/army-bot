@@ -2,14 +2,15 @@ import discord
 from beanie.odm.operators.find.comparison import In
 
 from database.counters import get_next_id
-from database.models import PromotionReport, User, Division
+from database.models import PromotionRequest, User, Division
+from ui.views.promotion import _promotion_view
 
 
-class PromotionReportModal(discord.ui.Modal, title="Рапорт на повышение"):
+class PromotionRequestModal(discord.ui.Modal, title="Рапорт на повышение"):
     evidence = discord.ui.TextInput(
         label="Доказательства",
         style=discord.TextStyle.paragraph,
-        placeholder="Например: Участие в поставке | 10 шт. | 30 баллов | https://imgur.com/...",
+        placeholder="Доказательства балловой системы:\n...\nОбязательные задания:",
         max_length=1024,
     )
     score = discord.ui.TextInput(
@@ -25,11 +26,9 @@ class PromotionReportModal(discord.ui.Modal, title="Рапорт на повыш
         self.user_db = user_db
 
     async def on_submit(self, interaction: discord.Interaction):
-        from ui.views.promotion import PromotionManagementView
-
-        existing = await PromotionReport.find_one(
-            PromotionReport.user_id == interaction.user.id,
-            In(PromotionReport.status, ["PENDING", "APPROVED"]),
+        existing = await PromotionRequest.find_one(
+            PromotionRequest.user_id == interaction.user.id,
+            In(PromotionRequest.status, ["PENDING", "APPROVED"]),
         )
         if existing:
             return await interaction.response.send_message(
@@ -37,7 +36,7 @@ class PromotionReportModal(discord.ui.Modal, title="Рапорт на повыш
             )
 
         new_id = await get_next_id("promotion_reports")
-        report = PromotionReport(
+        report = PromotionRequest(
             id=new_id,
             user_id=interaction.user.id,
             division_id=self.division.division_id,
@@ -54,7 +53,7 @@ class PromotionReportModal(discord.ui.Modal, title="Рапорт на повыш
         sent = await channel.send(
             content=f"-# ||<@{interaction.user.id}>||",
             embed=await report.to_embed(interaction.client),
-            view=PromotionManagementView(report.id),
+            view=_promotion_view(report.id, "approve", "reject", "cancel"),
         )
 
         report.message_id = sent.id

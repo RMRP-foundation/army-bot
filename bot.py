@@ -8,7 +8,7 @@ from pymongo import UpdateOne
 import config
 from database import divisions
 from database.connection import establish_db_connection
-from database.models import User, TimeoffRequest, RoleRequest, PromotionReport
+from database.models import User, TimeoffRequest, RoleRequest, PromotionRequest
 from error_handling import _custom_view_on_error, on_tree_error, on_command_error
 from ui.views import load_buttons
 from utils.audit import audit_logger
@@ -70,13 +70,24 @@ class Bot(commands.Bot):
         """Сбрасывает PROCESSING -> PENDING при каждом старте."""
         from database.models import DismissalRequest, SSOPatrolRequest, LogisticsRequest, LeaveRequest, TransferRequest
         simple_models = [
-            DismissalRequest, SSOPatrolRequest, LogisticsRequest, RoleRequest, TimeoffRequest, LeaveRequest, PromotionReport
+            DismissalRequest, SSOPatrolRequest, LogisticsRequest, RoleRequest, TimeoffRequest
         ]
         for model in simple_models:
             await model.get_pymongo_collection().update_many(
                 {"status": "PROCESSING"},
                 {"$set": {"status": "PENDING"}}
             )
+
+        for model in (PromotionRequest, LeaveRequest):
+            await model.get_pymongo_collection().update_many(
+                {"status": "PROCESSING", "reviewer_id": {"$ne": None}},
+                {"$set": {"status": "APPROVED"}}
+            )
+            await model.get_pymongo_collection().update_many(
+                {"status": "PROCESSING"},
+                {"$set": {"status": "PENDING"}}
+            )
+
 
         div_with_positions = [d.division_id for d in divisions.divisions if d.positions]
 

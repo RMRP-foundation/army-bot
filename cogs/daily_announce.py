@@ -7,6 +7,7 @@ from discord.ext import commands, tasks
 
 import config
 from bot import Bot
+from utils.bottom_message import bump_bottom_message
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,7 @@ class DailyAnnounce(commands.Cog):
                 await channel.send(
                     file=discord.File(fp=str(file_path), filename="daily_announce.png")
                 )
+                await bump_bottom_message(self.bot, channel_id)
             except discord.Forbidden:
                 logger.warning(
                     f"Permission denied to send message in channel ID {channel_id}."
