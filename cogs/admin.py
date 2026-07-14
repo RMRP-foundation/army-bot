@@ -1,3 +1,4 @@
+import discord
 from discord.ext import commands
 from beanie import Document
 import database.models
@@ -60,6 +61,21 @@ class Admin(commands.Cog):
             user.position = None
             await user.save()
             await ctx.message.add_reaction("✅")
+
+    @commands.command(name="resync")
+    @commands.is_owner()
+    async def resync_command(self, ctx: commands.Context):
+        ctx.bot.tree.clear_commands(guild=ctx.guild)
+        await ctx.bot.tree.sync(guild=ctx.guild)
+
+        ctx.bot.tree.copy_global_to(guild=ctx.guild)
+        await ctx.bot.tree.sync(guild=ctx.guild)
+
+        ctx.bot.tree.clear_commands(guild=None)
+        await ctx.bot.tree.sync()
+
+        await ctx.message.add_reaction("✅")
+
 
 
 async def setup(bot):
