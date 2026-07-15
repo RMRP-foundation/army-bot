@@ -1,6 +1,7 @@
 import discord
 from beanie.odm.operators.find.comparison import In
 
+import config
 from database.counters import get_next_id
 from database.models import PromotionRequest, User, Division
 from ui.views.promotion import _promotion_view
@@ -15,7 +16,7 @@ class PromotionRequestModal(discord.ui.Modal, title="Рапорт на повы�
     )
     score = discord.ui.TextInput(
         label="Общее количество баллов",
-        placeholder="Например: 300 (ВА и КМБ оставляет поле пустым)",
+        placeholder="Например: 300 из 300 (ВА и КМБ оставляет поле пустым)",
         max_length=100,
         required=False,
     )
@@ -50,8 +51,12 @@ class PromotionRequestModal(discord.ui.Modal, title="Рапорт на повы�
         await interaction.response.send_message("✅ Рапорт отправлен.", ephemeral=True)
 
         channel = interaction.client.get_channel(self.division.promotion_channel)
+        role_ids = config.PROMOTION_NOTIFY_ROLES.get(self.division.division_id, ())
+        role_tags = " ".join(f"<@&{rid}>" for rid in role_ids)
+        content = f"-# ||<@{interaction.user.id}>{f' {role_tags}' if role_tags else ''}||"
+
         sent = await channel.send(
-            content=f"-# ||<@{interaction.user.id}>||",
+            content=content,
             embed=await report.to_embed(interaction.client),
             view=_promotion_view(report.id, "approve", "reject", "cancel"),
         )

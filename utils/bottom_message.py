@@ -28,7 +28,18 @@ async def _execute_update(
     new_message = await channel.send(embed=embed, view=view)
 
     if bottom_message:
-        await _swap_message(bot, channel_id, bottom_message, new_message)
+        try:
+            await bot.http.delete_message(channel_id, bottom_message.message_id)
+        except discord.NotFound:
+            logger.debug(f"Bottom message {bottom_message.message_id} already deleted")
+        except discord.Forbidden:
+            logger.warning(f"No permission to delete message in channel {channel_id}")
+        except Exception as e:
+            logger.error(f"Failed to delete bottom message: {e}")
+
+        if bottom_message:
+            bottom_message.message_id = new_message.id
+            await bottom_message.save()
     else:
         new_bottom_message = BottomMessage(
             channel_id=channel_id, message_id=new_message.id
@@ -69,43 +80,3 @@ async def update_bottom_message(
             del _pending_tasks[channel_id]
 
     task.add_done_callback(_cleanup)
-
-async def _swap_message(bot, channel_id: int, bottom_message: BottomMessage, new_message: discord.Message) -> None:
-    try:
-        await bot.http.delete_message(channel_id, bottom_message.message_id)
-    except discord.NotFound:
-        logger.debug(f"Bottom message {bottom_message.message_id} already deleted")
-    except discord.Forbidden:
-        logger.warning(f"No permission to delete message in channel {channel_id}")
-    except Exception as e:
-        logger.error(f"Failed to delete bottom message: {e}")
-
-    bottom_message.message_id = new_message.id
-    await bottom_message.save()
-
-
-async def bump_bottom_message(bot, channel_id: int) -> None:
-    """Пересылает текущее нижнее сообщение канала в самый низ, не меняя его содержимое."""
-    bottom_message = await BottomMessage.find_one(BottomMessage.channel_id == channel_id)
-    if not bottom_message:
-        return
-
-    channel = bot.get_channel(channel_id)
-    if not channel:
-        logger.warning(f"Channel {channel_id} not found")
-        return
-
-    try:
-        old_message = await channel.fetch_message(bottom_message.message_id)
-    except discord.NotFound:
-        logger.debug(f"Bottom message {bottom_message.message_id} not found, skipping bump")
-        return
-
-    if old_message.flags.components_v2:
-        view = discord.ui.LayoutView.from_message(old_message, timeout=None)
-        new_message = await channel.send(view=view)
-    else:
-        view = discord.ui.View.from_message(old_message, timeout=None)
-        new_message = await channel.send(embeds=old_message.embeds, view=view)
-
-    await _swap_message(bot, channel_id, bottom_message, new_message)

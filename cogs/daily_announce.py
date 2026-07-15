@@ -7,12 +7,12 @@ from discord.ext import commands, tasks
 
 import config
 from bot import Bot
-from utils.bottom_message import bump_bottom_message
+from database import divisions
 
 logger = logging.getLogger(__name__)
 
 # 21:00 по МСК
-DAILY_TIME = datetime.time(hour=18, minute=0, tzinfo=datetime.timezone.utc)
+DAILY_TIME = datetime.time(hour=18, minute=19, tzinfo=datetime.timezone.utc)
 PICS_PATH = Path("./daily_pics").resolve()
 
 
@@ -58,7 +58,13 @@ class DailyAnnounce(commands.Cog):
                 await channel.send(
                     file=discord.File(fp=str(file_path), filename="daily_announce.png")
                 )
-                await bump_bottom_message(self.bot, channel_id)
+
+                is_promotion_channel = any(d.promotion_channel == channel_id for d in divisions.divisions)
+
+                if is_promotion_channel:
+
+                    from cogs.promotion import update_bottom_message as _update_bottom_message
+                    await _update_bottom_message(self.bot, channel_id)
             except discord.Forbidden:
                 logger.warning(
                     f"Permission denied to send message in channel ID {channel_id}."
