@@ -19,8 +19,8 @@ class PromotionRequestModal(discord.ui.Modal, title="Рапорт на повы�
             self.evidence = evidence("Доказательства")
             self.add_item(self.evidence)
         else:
-            self.mandatory = evidence("Обязательные условия")
-            self.additional = evidence("Дополнительные условия")
+            self.mandatory = evidence("Доказательства балловой системы")
+            self.additional = evidence("Обязательные условия вне балловой системы")
             self.score = score()
 
             for item in (self.mandatory, self.additional, self.score):

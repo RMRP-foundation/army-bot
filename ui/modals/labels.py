@@ -71,6 +71,6 @@ def evidence(label: str):
 def score():
     return discord.ui.TextInput(
                 label="Общее количество баллов",
-                placeholder="Например: 300 из 300 (ВА и КМБ оставляет поле пустым)",
+                placeholder="Например: 300 из 300",
                 max_length=100,
             )
