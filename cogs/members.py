@@ -34,7 +34,7 @@ class MembersBrowser(discord.ui.LayoutView):
                 abbr is not None
                 and abbr.lower() == "ва"
                 and u.invited_at is not None
-                and (discord.utils.utcnow() - u.invited_at.replace(tzinfo=datetime.timezone.utc)).days > ACADEMY_DAYS_LIMIT
+                and (discord.utils.utcnow() - u.invited_at.replace(tzinfo=datetime.timezone.utc)).days >= ACADEMY_DAYS_LIMIT
         )
         no_date = (
                 abbr is not None
