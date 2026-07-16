@@ -4,27 +4,27 @@ from beanie.odm.operators.find.comparison import In
 import config
 from database.counters import get_next_id
 from database.models import PromotionRequest, User, Division
+from ui.modals.labels import evidence, score
 from ui.views.promotion import _promotion_view
 
 
 class PromotionRequestModal(discord.ui.Modal, title="Рапорт на повышение"):
-    evidence = discord.ui.TextInput(
-        label="Доказательства",
-        style=discord.TextStyle.paragraph,
-        placeholder="Перечислите выполненную работу и прикрепите ссылки на доказательства",
-        max_length=1024,
-    )
-    score = discord.ui.TextInput(
-        label="Общее количество баллов",
-        placeholder="Например: 300 из 300 (ВА и КМБ оставляет поле пустым)",
-        max_length=100,
-        required=False,
-    )
-
     def __init__(self, division: Division, user_db: User):
         super().__init__()
         self.division = division
         self.user_db = user_db
+        self.evidence = self.mandatory = self.additional = self.score = None
+
+        if division.division_id in config.PROMOTION_SIMPLE_EVIDENCE_DIVISIONS:
+            self.evidence = evidence("Доказательства")
+            self.add_item(self.evidence)
+        else:
+            self.mandatory = evidence("Обязательные условия")
+            self.additional = evidence("Дополнительные условия")
+            self.score = score()
+
+            for item in (self.mandatory, self.additional, self.score):
+                self.add_item(item)
 
     async def on_submit(self, interaction: discord.Interaction):
         existing = await PromotionRequest.find_one(
@@ -36,6 +36,11 @@ class PromotionRequestModal(discord.ui.Modal, title="Рапорт на повы�
                 f"❌ У вас уже есть активный рапорт #{existing.id}.", ephemeral=True
             )
 
+        if self.evidence:
+            evidence_val = self.evidence.value
+        else:
+            evidence_val = f"{self.mandatory.value}|||{self.additional.value}"
+
         new_id = await get_next_id("promotion_reports")
         report = PromotionRequest(
             id=new_id,
@@ -43,8 +48,8 @@ class PromotionRequestModal(discord.ui.Modal, title="Рапорт на повы�
             division_id=self.division.division_id,
             current_rank=self.user_db.rank,
             target_rank=self.user_db.rank + 1,
-            evidence=self.evidence.value,
-            score=self.score.value or None,
+            evidence=evidence_val,
+            score=self.score.value if self.score and self.score.value else None,
         )
         await report.create()
 

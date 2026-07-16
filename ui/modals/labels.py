@@ -59,3 +59,18 @@ def patrol_reminder():
         "выполнять задачи возложенные на подразделение, взаимодействовать с бойцами подразделения "
         "и выполнять приказы его командиров."
     )
+
+def evidence(label: str):
+    return discord.ui.TextInput(
+                label=label,
+                style=discord.TextStyle.paragraph,
+                placeholder="Перечислите выполненную работу и прикрепите ссылки на доказательства",
+                max_length=1024,
+            )
+
+def score():
+    return discord.ui.TextInput(
+                label="Общее количество баллов",
+                placeholder="Например: 300 из 300 (ВА и КМБ оставляет поле пустым)",
+                max_length=100,
+            )

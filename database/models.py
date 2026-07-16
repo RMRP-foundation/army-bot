@@ -787,7 +787,14 @@ class PromotionRequest(Document):
         e.add_field(name="Имя Фамилия", value=requester.full_name, inline=True)
         e.add_field(name="Статик", value=format_game_id(requester.static), inline=True)
         e.add_field(name="Звание", value=f"{display_rank(self.current_rank)}  ⟶ {display_rank(self.target_rank)}", inline=False)
-        e.add_field(name="Доказательства", value=self.evidence, inline=False)
+
+        match self.evidence.split("|||"):
+            case [mandatory, additional]:
+                e.add_field(name="Обязательные условия", value=mandatory, inline=False)
+                e.add_field(name="Дополнительные условия", value=additional, inline=False)
+            case [evidence]:
+                e.add_field(name="Доказательства", value=evidence, inline=False)
+
         if self.score:
             e.add_field(name="Баллы", value=self.score, inline=False)
         if self.reject_reason:
