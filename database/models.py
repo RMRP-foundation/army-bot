@@ -4,7 +4,7 @@ from typing import Dict
 
 import discord
 from beanie import Document, Indexed
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 import config
 from utils.user_data import format_game_id, display_rank, transliterate_abbreviation
@@ -759,7 +759,7 @@ class PromotionRequest(Document):
     division_id: int
     current_rank: int
     target_rank: int
-    evidence: str
+    evidence: Dict[str, str] = Field(default_factory=dict)
     score: str | None = None
     reject_reason: str | None = None
     status: str = "PENDING"  # PENDING, APPROVED, PROMOTED, REJECTED, CANCELLED
@@ -767,6 +767,17 @@ class PromotionRequest(Document):
     promoted_by: int | None = None
     created_at: datetime.datetime = Field(default_factory=datetime.datetime.now)
     message_id: int | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def convert_old_evidence(cls, data):
+        if not isinstance(data, dict):
+            return data
+
+        raw_evidence = data.get("evidence")
+        if isinstance(raw_evidence, str):
+            data["evidence"] = {"Доказательства": raw_evidence}
+        return data
 
     async def to_embed(self, bot) -> discord.Embed:
         status_map = {
@@ -788,12 +799,10 @@ class PromotionRequest(Document):
         e.add_field(name="Статик", value=format_game_id(requester.static), inline=True)
         e.add_field(name="Звание", value=f"{display_rank(self.current_rank)}  ⟶ {display_rank(self.target_rank)}", inline=False)
 
-        match self.evidence.split("|||"):
-            case [mandatory, additional]:
-                e.add_field(name="Обязательные условия", value=mandatory, inline=False)
-                e.add_field(name="Дополнительные условия", value=additional, inline=False)
-            case [evidence]:
-                e.add_field(name="Доказательства", value=evidence, inline=False)
+        if self.evidence:
+            for title, content in self.evidence.items():
+                if content and content.strip():
+                    e.add_field(name=title, value=content, inline=False)
 
         if self.score:
             e.add_field(name="Баллы", value=self.score, inline=False)

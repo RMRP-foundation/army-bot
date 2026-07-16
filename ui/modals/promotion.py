@@ -36,10 +36,13 @@ class PromotionRequestModal(discord.ui.Modal, title="Рапорт на повы�
                 f"❌ У вас уже есть активный рапорт #{existing.id}.", ephemeral=True
             )
 
+        ev = {}
+
         if self.evidence:
-            evidence_val = self.evidence.value
+            ev["Доказательства"] = self.evidence.value
         else:
-            evidence_val = f"{self.mandatory.value}|||{self.additional.value}"
+            ev["Обязательные условия"] = self.mandatory.value
+            ev["Дополнительные условия"] = self.additional.value
 
         new_id = await get_next_id("promotion_reports")
         report = PromotionRequest(
@@ -48,7 +51,7 @@ class PromotionRequestModal(discord.ui.Modal, title="Рапорт на повы�
             division_id=self.division.division_id,
             current_rank=self.user_db.rank,
             target_rank=self.user_db.rank + 1,
-            evidence=evidence_val,
+            evidence=ev,
             score=self.score.value if self.score and self.score.value else None,
         )
         await report.create()
