@@ -10,7 +10,7 @@ from ui.views.indicators import indicator_view
 from utils.audit import AuditAction, audit_logger
 from utils.mongo_lock import try_lock
 from utils.notifications import notify_promoted, notify_promotion_approved, notify_promotion_rejected
-from utils.roles import to_rank
+from utils.roles import to_rank, to_division
 from utils.user_data import get_initiator
 
 
@@ -255,10 +255,17 @@ class PromoteButton(
             return
 
         user_db.rank = report.target_rank
+
+        if div.abbreviation.lower() == "ва" and report.target_rank == config.RankIndex.JUNIOR_SERGEANT:
+            if vbp := divisions.get_division_by_abbreviation("ВБП"):
+                user_db.division = vbp.division_id
+
         await user_db.save()
 
         if member:
             new_roles = to_rank(member.roles, user_db.rank)
+            if user_db.division != report.division_id:
+                new_roles = to_division(new_roles, user_db.division)
             await member.edit(
                 nick=user_db.discord_nick,
                 roles=new_roles,
