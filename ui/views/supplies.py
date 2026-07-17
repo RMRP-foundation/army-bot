@@ -187,11 +187,18 @@ class ItemSelectView(discord.ui.View):
 
         if modal.result is not None:
             new_qty = modal.result
+
+            temp_items = self.request.items.copy()
             if new_qty == 0:
-                if item_name in self.request.items:
-                    del self.request.items[item_name]
+                temp_items.pop(item_name, None)
             else:
-                self.request.items[item_name] = new_qty
+                temp_items[item_name] = new_qty
+
+            is_valid, error_msg = check_limits(temp_items)
+            if not is_valid:
+                return await interaction.followup.send(f"❌ {error_msg}", ephemeral=True)
+
+            self.request.items = temp_items
 
             await self.request.set({"items": self.request.items})
 
