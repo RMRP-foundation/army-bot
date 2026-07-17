@@ -44,8 +44,9 @@ class Logistics(commands.Cog):
             await req.save()
             if req.message_id:
                 try:
-                    msg = await channel.fetch_message(req.message_id)
-                    await msg.edit(embed=await req.to_embed(), view=None)
+                    await channel.get_partial_message(req.message_id).edit(
+                        embed=await req.to_embed(), view=None
+                    )
                 except Exception as e:
                     logger.error(f"Error updating logistics message #{req.id}: {e}")
                     continue
