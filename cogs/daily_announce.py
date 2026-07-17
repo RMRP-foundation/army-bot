@@ -12,7 +12,7 @@ from database import divisions
 logger = logging.getLogger(__name__)
 
 # 21:00 по МСК
-DAILY_TIME = datetime.time(hour=18, minute=19, tzinfo=datetime.timezone.utc)
+DAILY_TIME = datetime.time(hour=18, minute=0, tzinfo=datetime.timezone.utc)
 PICS_PATH = Path("./daily_pics").resolve()
 
 
