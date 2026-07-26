@@ -263,7 +263,7 @@ class TimeoffRequest(Document):
     data: RoleData
     status: str = "PENDING"
     period: str | None = None
-    sent_at: datetime.datetime = Field(default_factory=datetime.datetime.now)
+    sent_at: datetime.datetime = Field(default_factory=discord.utils.utcnow)
     reviewed_at: datetime.datetime | None = None
 
     async def to_embed(self):

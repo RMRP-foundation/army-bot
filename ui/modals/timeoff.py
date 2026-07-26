@@ -65,8 +65,10 @@ class TimeoffRequestModal(discord.ui.Modal, title="Заявление на от�
         view.add_item(TimeoffCancelButton(request_id=request.id))
 
         division = divisions.get_division(requester.division)
+        if not division or not division.positions:
+            division = divisions.get_division_by_abbreviation("ВК")
 
-        positions = division.positions if division else []
+        positions = division.positions if (division and divisions.positions) else []
         mentions = [
             f"<@&{pos.role_id}>"
             for pos in positions

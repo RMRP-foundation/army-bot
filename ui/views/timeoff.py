@@ -17,11 +17,19 @@ from utils.user_data import get_initiator, get_user_defaults
 
 MSK = datetime.timezone(datetime.timedelta(hours=3))
 
+def _msk_day_start_utc() -> datetime.datetime:
+    """Начало текущих суток по МСК, возвращённое в UTC для сравнения с БД."""
+    now_utc = discord.utils.utcnow()
+    today_msk = now_utc.astimezone(MSK).replace(hour=0, minute=0, second=0, microsecond=0)
+    return today_msk.astimezone(datetime.timezone.utc)
 
 async def _check_can_apply(interaction: discord.Interaction) -> bool:
+    cutoff = _msk_day_start_utc()
+
     opened_request = await TimeoffRequest.find_one(
         TimeoffRequest.user_id == interaction.user.id,
-        In(TimeoffRequest.status, ["PENDING", "PROCESSING"])
+        In(TimeoffRequest.status, ["PENDING", "PROCESSING"]),
+        TimeoffRequest.sent_at >= cutoff,
     )
     if opened_request is not None:
         await interaction.response.send_message(
@@ -44,11 +52,10 @@ async def _check_can_apply(interaction: discord.Interaction) -> bool:
         )
         return False
 
-    today = datetime.datetime.now(MSK).replace(hour=0, minute=0, second=0, microsecond=0)
     approved_request = await TimeoffRequest.find_one(
         TimeoffRequest.user_id == interaction.user.id,
         TimeoffRequest.status == "APPROVED",
-        TimeoffRequest.reviewed_at >= today,
+        TimeoffRequest.reviewed_at >= cutoff,
     )
     if approved_request:
         await interaction.response.send_message(
@@ -155,7 +162,7 @@ class TimeoffManagementButton(
             return
 
         request.status = "APPROVED" if self.action == "approve" else "REJECTED"
-        request.reviewed_at = datetime.datetime.now(MSK)
+        request.reviewed_at = discord.utils.utcnow()
         await request.save()
 
         assert isinstance(interaction.response, InteractionResponse)
@@ -200,7 +207,7 @@ class TimeoffCancelButton(
             return
 
         req.status = "REJECTED"
-        req.reviewed_at = datetime.datetime.now(MSK)
+        req.reviewed_at = discord.utils.utcnow()
         await req.save()
 
         await interaction.response.send_message(content="✅ Ваша заявка была отменена.", ephemeral=True)
