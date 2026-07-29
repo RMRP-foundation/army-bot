@@ -25,18 +25,6 @@ class TimeoffRequestModal(discord.ui.Modal, title="Заявление на от�
         self.name.default = user_name
 
     async def on_submit(self, interaction: discord.Interaction):
-        opened_request = await TimeoffRequest.find_one(
-            TimeoffRequest.user_id == interaction.user.id,
-            TimeoffRequest.status == "PENDING",  # noqa: E712
-        )
-        if opened_request is not None:
-            await interaction.response.send_message(
-                f"### У вас уже есть открытое заявление #{opened_request.id} на рассмотрении.\n"
-                "Ожидайте его рассмотрения.",
-                ephemeral=True,
-            )
-            return
-
         if not nickname_regex.match(self.name.value):
             await interaction.response.send_message(
                 "### Вы ввели некорректное имя и фамилию. "
@@ -68,7 +56,7 @@ class TimeoffRequestModal(discord.ui.Modal, title="Заявление на от�
         if not division or not division.positions:
             division = divisions.get_division_by_abbreviation("ВК")
 
-        positions = division.positions if (division and divisions.positions) else []
+        positions = division.positions if (division and division.positions) else []
         mentions = [
             f"<@&{pos.role_id}>"
             for pos in positions
