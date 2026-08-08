@@ -97,7 +97,7 @@ class PromotionManagementButton(
             await PromotionRequest.get_pymongo_collection().update_one(
                 {"_id": self.report_id}, {"$set": {"status": "PENDING"}}
             )
-            return await interaction.response.send_message(err, ephemeral=True)
+            return await interaction.edit_original_response(content=err)
 
         report.status = "APPROVED"
         report.reviewer_id = interaction.user.id
@@ -105,11 +105,12 @@ class PromotionManagementButton(
 
         view = _promotion_view(report.id, "promote", "reject")
 
-        await interaction.response.edit_message(
+        await interaction.message.edit(
             content=f"-# ||<@{report.user_id}> <@{interaction.user.id}>||",
             embed=await report.to_embed(interaction.client),
             view=view,
         )
+        await interaction.edit_original_response(content="✅ Рапорт одобрен.")
 
         await notify_promotion_approved(interaction.client, report.user_id)
 
@@ -157,21 +158,22 @@ class PromotionManagementButton(
             await PromotionRequest.get_pymongo_collection().update_one(
                 {"_id": self.report_id}, {"$set": {"status": "PENDING"}}
             )
-            return await interaction.response.send_message(
-                "❌ Отменить рапорт может только его автор.", ephemeral=True
+            return await interaction.edit_original_response(
+                content="❌ Отменить рапорт может только его автор."
             )
 
         report.status = "CANCELLED"
         await report.save()
 
-        await interaction.response.send_message("✅ Ваш рапорт был отменен.", ephemeral=True)
+        await interaction.edit_original_response(content="✅ Ваш рапорт был отменен.")
         await interaction.message.delete()
 
     async def callback(self, interaction: Interaction[ClientT]):
         if self.action != "reject":
+            await interaction.response.send_message("⏳ Выполняются действия...", ephemeral=True)
             if not await try_lock(PromotionRequest, self.report_id, "status", "PROCESSING", "PENDING"):
-                return await interaction.response.send_message(
-                    f"❌ Рапорт #{self.report_id} не найден или уже обработан.", ephemeral=True
+                return await interaction.edit_original_response(
+                    content=f"❌ Рапорт #{self.report_id} не найден или уже обработан."
                 )
 
             report = await PromotionRequest.find_one(PromotionRequest.id == self.report_id)
@@ -212,9 +214,12 @@ class PromoteButton(
         return cls(int(match.group("id")))
 
     async def callback(self, interaction: Interaction[ClientT]):
+        promoter = await get_initiator(interaction)
+
+        await interaction.response.send_message("⏳ Выполняются действия...", ephemeral=True)
         if not await try_lock(PromotionRequest, self.report_id, "status", "PROCESSING", "APPROVED"):
-            return await interaction.response.send_message(
-                f"❌ Рапорт #{self.report_id} не найден или уже обработан.", ephemeral=True
+            return await interaction.edit_original_response(
+                content=f"❌ Рапорт #{self.report_id} не найден или уже обработан."
             )
 
         report = await PromotionRequest.find_one(PromotionRequest.id == self.report_id)
@@ -226,19 +231,17 @@ class PromoteButton(
                 await PromotionRequest.get_pymongo_collection().update_one(
                     {"_id": self.report_id}, {"$set": {"status": "APPROVED"}}
                 )
-                return await interaction.response.send_message(
-                    "❌ Невозможно повысить военнослужащего с активными дисциплинарными взысканиями или под расследованием.",
-                    ephemeral=True,
+                return await interaction.edit_original_response(
+                    content="❌ Невозможно повысить военнослужащего с активными дисциплинарными взысканиями или под расследованием."
                 )
 
-        promoter = await get_initiator(interaction)
         div = divisions.get_division(report.division_id)
         ok, err = _can_promote(promoter, div)
         if not ok:
             await PromotionRequest.get_pymongo_collection().update_one(
                 {"_id": self.report_id}, {"$set": {"status": "APPROVED"}}
             )
-            return await interaction.response.send_message(err, ephemeral=True)
+            return await interaction.edit_original_response(content=err)
 
         user_db = await User.find_one(User.discord_id == report.user_id)
         if user_db.rank is None:
@@ -247,20 +250,35 @@ class PromoteButton(
             report.reject_reason = "Военнослужащий уволен."
             await report.save()
 
-            await interaction.response.edit_message(
+            await interaction.message.edit(
                 content=f"-# ||<@{report.user_id}> <@{interaction.user.id}>||",
                 embed=await report.to_embed(interaction.client),
                 view=indicator_view("Отклонён", emoji="👎"),
             )
+            await interaction.edit_original_response(
+                content="❌ Военнослужащий больше не состоит на службе."
+            )
             return
 
-        user_db.rank = report.target_rank
-
+        new_division = user_db.division
         if div.abbreviation.lower() == "ва" and report.target_rank == config.RankIndex.JUNIOR_SERGEANT:
             if vbp := divisions.get_division_by_abbreviation("ВБП"):
-                user_db.division = vbp.division_id
+                new_division = vbp.division_id
 
-        await user_db.save()
+        result = await User.get_pymongo_collection().update_one(
+            {"discord_id": report.user_id, "rank": report.current_rank},
+            {"$set": {"rank": report.target_rank, "division": new_division}},
+        )
+        if result.modified_count == 0:
+            await PromotionRequest.get_pymongo_collection().update_one(
+                {"_id": self.report_id}, {"$set": {"status": "APPROVED"}}
+            )
+            return await interaction.edit_original_response(
+                content="❌ Ранг военнослужащего изменился после подачи рапорта."
+            )
+
+        user_db.rank = report.target_rank
+        user_db.division = new_division
 
         if member:
             new_roles = to_rank(member.roles, user_db.rank)
@@ -276,13 +294,18 @@ class PromoteButton(
         report.promoted_by = interaction.user.id
         await report.save()
 
-        await interaction.response.edit_message(
+        await interaction.message.edit(
             content=f"-# ||<@{report.user_id}> <@{report.reviewer_id}> <@{interaction.user.id}>||",
             embed=await report.to_embed(interaction.client),
             view=indicator_view("Повышен", emoji="⭐"),
         )
+        await interaction.edit_original_response(content="✅ Военнослужащий повышен.")
 
-        await audit_logger.log_action(action=AuditAction.PROMOTED, initiator=interaction.user, target=report.user_id)
+        await audit_logger.log_action(
+            action=AuditAction.PROMOTED,
+            initiator=interaction.user,
+            target=report.user_id,
+        )
         await notify_promoted(interaction.client, report.user_id, config.RANKS[report.target_rank])
 
 
