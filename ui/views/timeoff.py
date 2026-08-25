@@ -45,9 +45,9 @@ async def _check_can_apply(interaction: discord.Interaction) -> bool:
             ephemeral=True,
         )
         return False
-    if user.rank < config.RankIndex.CORPORAL:
+    if user.rank < config.RankIndex.JUNIOR_SERGEANT:
         await interaction.response.send_message(
-            "### Вы не можете подать заявление на отгул. Требуется звание: Ефрейтор+",
+            "### Вы не можете подать заявление на отгул. Требуется звание: Младший сержант+",
             ephemeral=True,
         )
         return False
