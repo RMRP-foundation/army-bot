@@ -20,6 +20,7 @@ from utils.notifications import (
     notify_position_changed,
     notify_promoted, notify_blacklisted,
 )
+from utils.permissions import is_high_command
 from utils.roles import to_division, to_position, to_rank
 from utils.user_data import format_game_id, get_initiator, display_rank
 
@@ -595,37 +596,54 @@ class UserEdit(commands.Cog):
                 editor = await get_initiator(interaction)
                 new_position_name = position_select.values[0]
 
-                if editor.division and editor.position:
-                    editor_div_obj = divisions.get_division(editor.division)
-                    if editor_div_obj and editor_div_obj.positions:
-                        editor_pos_obj = next(
-                            (
-                                p
-                                for p in editor_div_obj.positions
-                                if p.name == editor.position
-                            ),
-                            None,
-                        )
-                        target_pos_obj = next(
-                            (
-                                p
-                                for p in (div_obj.positions or [])
-                                if p.name == new_position_name
-                            ),
-                            None,
-                        )
+                IS_GENSTAB_OVERRIDE = (
+                        editor.division == 7
+                        and is_high_command(editor)
+                        and div_obj.division_id != 7
+                )
 
-                        if editor_pos_obj and target_pos_obj:
-                            if (
-                                editor_pos_obj.privilege.value
-                                <= target_pos_obj.privilege.value
-                            ):
-                                await interaction.response.send_message(
-                                    "❌ Вы не можете назначить должность "
-                                    "с привилегиями выше или равными вашим.",
-                                    ephemeral=True,
-                                )
-                                return
+                IS_GENARMY = editor.rank == 18
+
+                if not (IS_GENARMY or IS_GENSTAB_OVERRIDE):
+                    if not (editor.division and editor.position):
+                        await interaction.response.edit_message(
+                            view=self.build_view(user, user_info)
+                        )
+                        await interaction.followup.send(
+                            "❌ Ваша должность не определена, назначение недоступно.",
+                            ephemeral=True,
+                        )
+                        return
+
+                    editor_div_obj = divisions.get_division(editor.division)
+                    editor_pos_obj = next(
+                        (p for p in (editor_div_obj.positions or []) if p.name == editor.position),
+                        None,
+                    )
+                    target_pos_obj = next(
+                        (p for p in (div_obj.positions or []) if p.name == new_position_name),
+                        None,
+                    )
+
+                    if not (editor_pos_obj and target_pos_obj):
+                        await interaction.response.edit_message(
+                            view=self.build_view(user, user_info)
+                        )
+                        await interaction.followup.send(
+                            "❌ Не удалось определить привилегии должностей.",
+                            ephemeral=True,
+                        )
+                        return
+
+                    if editor_pos_obj.privilege.value <= target_pos_obj.privilege.value:
+                        await interaction.response.edit_message(
+                            view=self.build_view(user, user_info)
+                        )
+                        await interaction.followup.send(
+                            "❌ Недостаточно привилегий для данного назначения.",
+                            ephemeral=True,
+                        )
+                        return
 
                 old_position = user_info.position
                 user_info.position = new_position_name
