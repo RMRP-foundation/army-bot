@@ -1,10 +1,11 @@
 import discord
 from discord.ext import commands
 
-import config
+from core import config
 from bot import Bot
 from ui.views.supplies import SupplyCreateView
 from utils.bottom_message import update_bottom_message as _update_bottom_message
+from utils.permissions import is_service
 
 channel_id = config.CHANNELS["storage_requests"]
 
@@ -29,7 +30,7 @@ class Supplies(commands.Cog):
         self.bot = bot
 
     @commands.command(name="refresh_supplies")
-    @commands.is_owner()
+    @is_service()
     async def update_command(self, ctx: commands.Context):
         if ctx.channel.id != channel_id:
             return

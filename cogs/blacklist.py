@@ -4,20 +4,25 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-import config
 from bot import Bot
+from core import config
+from core.exceptions import ServiceError
 from database.models import Blacklist as BlacklistModel
 from database.models import User
-from utils.notifications import notify_blacklisted, notify_unblacklisted
-from utils.user_data import format_game_id, get_initiator
+from services.authorization import AuthorizationService
+from services.notifications import notify_blacklisted, notify_unblacklisted
+from utils.helpers import build_mentions, safe_respond
+from utils.permissions import is_officer, is_higher_rank
+from utils.user_data import format_static
 
 channel_id = config.CHANNELS["blacklist"]
 
 
-def have_permissions(initiator: User, target: User) -> bool:
-    if initiator.rank is None or initiator.rank < config.RankIndex.CAPTAIN:
+def can_manage_blacklist(initiator: User, target: User) -> bool:
+    """Проверяет права инициатора на управление ЧС (Капитан+, звание выше целевого бойца)."""
+    if not is_officer(initiator):
         return False
-    if target.rank is not None and target.rank >= initiator.rank:
+    if target.rank is not None and not is_higher_rank(initiator, target):
         return False
     return True
 
@@ -34,7 +39,7 @@ class Blacklist(commands.Cog):
     )
     @app_commands.describe(
         user="Военнослужащий для добавления в черный список",
-        days="Количество дней в черном списке",
+        days="Количество дней в черном списке (-1 для бессрочного)",
         reason="Причина добавления в черный список",
         evidence="Доказательства (ссылки на скриншоты, сообщения и т.д.)",
     )
@@ -46,73 +51,64 @@ class Blacklist(commands.Cog):
         reason: str,
         evidence: str,
     ):
-        db_user = await User.find_one(User.discord_id == user.id)
-        initiator = await get_initiator(interaction)
+        try:
+            initiator = await AuthorizationService.require_active_soldier(interaction)
+        except ServiceError as error:
+            await safe_respond(interaction, error.message)
+            return
+
+        db_user = await User.get_by_discord_id(user.id)
         if not db_user:
-            await interaction.response.send_message(
-                f"Пользователь {user.mention} не найден в базе данных.", ephemeral=True
+            await safe_respond(interaction, f"Пользователь {user.mention} не найден в базе данных.")
+            return
+
+        if not can_manage_blacklist(initiator, db_user):
+            await safe_respond(
+                interaction,
+                "❌ У вас нет прав для добавления этого пользователя в черный список (требуется Капитан+ и звание выше цели).",
             )
             return
 
-        if not have_permissions(initiator, db_user):
-            await interaction.response.send_message(
-                "❌ У вас нет прав для добавления этого пользователя в черный список.",
-                ephemeral=True,
-            )
-            return
+        await safe_respond(interaction, f"Гражданин {user.mention} был добавлен в черный список.")
 
-        await interaction.response.send_message(
-            f"Гражданин {user.mention} был добавлен в черный список.", ephemeral=True
-        )
-
-        blacklist = BlacklistModel(
+        blacklist_entry = BlacklistModel(
             initiator=interaction.user.id,
-            ends_at=datetime.datetime.now() + datetime.timedelta(days=days)
-            if days > 0
-            else None,
-            reason=reason,
-            evidence=evidence,
+            ends_at=discord.utils.utcnow() + datetime.timedelta(days=days) if days > 0 else None,
+            reason=reason.strip(),
+            evidence=evidence.strip(),
         )
 
-        db_user.blacklist = blacklist
+        db_user.blacklist = blacklist_entry
         await db_user.save()
 
-        # Уведомление в ЛС
         duration = f"{days} дней" if days > 0 else "Бессрочно"
         await notify_blacklisted(self.bot, user.id, reason, duration)
 
         embed = discord.Embed(
             title="📋 Новое дело",
             color=discord.Color.dark_red(),
-            timestamp=datetime.datetime.now(),
+            timestamp=discord.utils.utcnow(),
         )
-        author_name = (
-            f"Составитель: {initiator.full_name} | {format_game_id(initiator.static)}"
-        )
+        author_name = f"Составитель: {initiator.full_name} | {format_static(initiator.static)}"
         embed.set_author(name=author_name)
         embed.add_field(
             name="Гражданин",
-            value=f"{db_user.full_name} | {format_game_id(db_user.static)}",
+            value=f"{db_user.full_name} | {format_static(db_user.static)}",
             inline=False,
         )
         embed.add_field(name="Причина", value=reason[:1000], inline=False)
         embed.add_field(name="Доказательства", value=evidence[:1000], inline=False)
 
-        if days > 0:
-            ends_at_fmt = discord.utils.format_dt(blacklist.ends_at, style="d")
-            embed.add_field(
-                name="Срок",
-                value=f"{days} дней (до {ends_at_fmt})",
-                inline=False,
-            )
+        if days > 0 and blacklist_entry.ends_at:
+            ends_at_fmt = discord.utils.format_dt(blacklist_entry.ends_at, style="d")
+            embed.add_field(name="Срок", value=f"{days} дней (до {ends_at_fmt})", inline=False)
         else:
             embed.add_field(name="Срок", value="Бессрочно", inline=False)
 
-        mentions = " ".join(f"<@&{m}>" for m in config.BLACKLIST_MENTIONS)
-        await self.bot.get_channel(channel_id).send(
-            f"-# ||{user.mention} {interaction.user.mention} {mentions}||",
-            embed=embed,
-        )
+        mention_text = build_mentions([user.id, interaction.user.id], config.BLACKLIST_MENTIONS)
+        channel = self.bot.get_channel(channel_id)
+        if channel:
+            await channel.send(content=mention_text, embed=embed)
 
     @app_commands.command(
         name="unblacklist", description="Снять военнослужащего с черного списка"
@@ -128,59 +124,46 @@ class Blacklist(commands.Cog):
         user: discord.Member,
         reason: str,
     ):
-        db_user = await User.find_one(User.discord_id == user.id)
-        initiator = await get_initiator(interaction)
+        try:
+            initiator = await AuthorizationService.require_active_soldier(interaction)
+        except ServiceError as error:
+            await safe_respond(interaction, error.message)
+            return
 
+        db_user = await User.get_by_discord_id(user.id)
         if not db_user:
-            await interaction.response.send_message(
-                f"Пользователь {user.mention} не найден в базе данных.", ephemeral=True
-            )
+            await safe_respond(interaction, f"Пользователь {user.mention} не найден в базе данных.")
             return
 
         if not db_user.blacklist:
-            await interaction.response.send_message(
-                f"Пользователь {user.mention} не находится в черном списке.",
-                ephemeral=True,
-            )
+            await safe_respond(interaction, f"Пользователь {user.mention} не находится в черном списке.")
             return
 
-        if not have_permissions(initiator, db_user):
-            await interaction.response.send_message(
-                "У вас нет прав для снятия этого пользователя с черного списка.",
-                ephemeral=True,
-            )
+        if not can_manage_blacklist(initiator, db_user):
+            await safe_respond(interaction, "❌ У вас нет прав для снятия этого пользователя с черного списка.")
             return
 
-        await interaction.response.send_message(
-            f"Гражданин {user.mention} был вынесен из черного списка.", ephemeral=True
-        )
+        await safe_respond(interaction, f"Гражданин {user.mention} был вынесен из черного списка.")
 
         old_blacklist = db_user.blacklist
         db_user.blacklist = None
         await db_user.save()
 
-        # Уведомление в ЛС
         await notify_unblacklisted(self.bot, user.id)
 
         embed = discord.Embed(
             title="Дело закрыто",
             color=discord.Color.dark_green(),
-            timestamp=datetime.datetime.now(),
+            timestamp=discord.utils.utcnow(),
         )
-        author_name = (
-            f"Составитель: {initiator.full_name} | {format_game_id(initiator.static)}"
-        )
+        author_name = f"Составитель: {initiator.full_name} | {format_static(initiator.static)}"
         embed.set_author(name=author_name)
         embed.add_field(
             name="Гражданин",
-            value=f"{db_user.full_name} | {format_game_id(db_user.static)}",
+            value=f"{db_user.full_name} | {format_static(db_user.static)}",
             inline=False,
         )
-        embed.add_field(
-            name="Изначальная причина ЧС",
-            value=old_blacklist.reason[:1000],
-            inline=False,
-        )
+        embed.add_field(name="Изначальная причина ЧС", value=old_blacklist.reason[:1000], inline=False)
         embed.add_field(name="Причина снятия", value=reason[:1000], inline=False)
 
         if old_blacklist.ends_at:
@@ -192,10 +175,10 @@ class Blacklist(commands.Cog):
         else:
             embed.add_field(name="Срок был", value="Бессрочно", inline=False)
 
-        await self.bot.get_channel(channel_id).send(
-            f"-# ||{user.mention} {interaction.user.mention}||",
-            embed=embed,
-        )
+        mention_text = build_mentions([user.id, interaction.user.id])
+        channel = self.bot.get_channel(channel_id)
+        if channel:
+            await channel.send(content=mention_text, embed=embed)
 
 
 async def setup(bot: Bot):

@@ -1,78 +1,30 @@
+import re
+
 import discord
-import datetime
-import config
-from database.models import SSOPatrolRequest
-from database import divisions
-from texts import patrol_title, patrol_rules
-from ui.views.indicators import indicator_view
-from utils.permissions import is_high_command
-from utils.user_data import get_initiator
 
-MSK = datetime.timezone(datetime.timedelta(hours=3))
-
-
-class SSOPatrolManagementButton(discord.ui.DynamicItem[discord.ui.Button],
-                                template=r"sso_mng:(?P<action>\w+):(?P<id>\d+)"):
-    def __init__(self, action: str, request_id: int):
-        labels = {"approve": "Одобрить", "reject": "Отклонить"}
-        styles = {"approve": discord.ButtonStyle.success, "reject": discord.ButtonStyle.danger}
-        emojis = {"approve": "👍", "reject": "👎"}
-
-        super().__init__(discord.ui.Button(
-            label=labels.get(action, action),
-            emoji=emojis[action],
-            style=styles[action],
-            custom_id=f"sso_mng:{action}:{request_id}"
-        ))
-        self.action, self.request_id = action, request_id
-
-    @classmethod
-    async def from_custom_id(cls, interaction, item, match):
-        return cls(match.group("action"), int(match.group("id")))
-
-    async def callback(self, interaction: discord.Interaction):
-        from utils.mongo_lock import try_lock
-        if not await try_lock(SSOPatrolRequest, self.request_id, "status", "PROCESSING", "PENDING"):
-            return await interaction.response.send_message(f"### ❌ Заявление #{self.request_id} уже обработано.", ephemeral=True)
-
-        user = await get_initiator(interaction)
-        div_info = divisions.get_division(user.division) if user else None
-
-        is_sso = div_info and div_info.abbreviation == "ССО"
-        is_staff = await is_high_command(interaction.user.id)
-        if not user or not (is_sso or is_staff):
-            await SSOPatrolRequest.get_pymongo_collection().update_one(
-                {"_id": self.request_id}, {"$set": {"status": "PENDING"}}
-            )
-            return await interaction.response.send_message(
-                "### ❌ Ошибка доступа\nРассматривать заявления могут только сотрудники ССО.", ephemeral=True)
-
-        req = await SSOPatrolRequest.find_one(SSOPatrolRequest.id == self.request_id)
-
-        req.status = "APPROVED" if self.action == "approve" else "REJECTED"
-        req.reviewer_id = interaction.user.id
-        await req.save()
-
-        status_map = {"approve": ("Одобрил", "👍"), "reject": ("Отклонил", "👎")}
-        status_text, final_emoji = status_map.get(self.action, ("Обработал", "📝"))
-
-        await interaction.response.edit_message(
-            content=f"-# ||<@{req.user_id}> {interaction.user.mention}||",
-            embed=await req.to_embed(interaction.client),
-            view=indicator_view(f"{status_text} {interaction.user.display_name}", emoji=final_emoji)
-        )
+from core.exceptions import ServiceError
+from services.authorization import AuthorizationService
+from services.sso_patrol import SSOPatrolService
+from texts import patrol_rules, patrol_title
+from ui.modals.sso_patrol import SSOPatrolModal
+from utils.helpers import safe_respond, safe_edit_message, build_mentions, random_loading_message
 
 
 class SSOPatrolApplyView(discord.ui.LayoutView):
     def __init__(self):
         super().__init__(timeout=None)
+
         container = discord.ui.Container()
         container.add_item(discord.ui.TextDisplay(patrol_title))
         container.add_item(discord.ui.TextDisplay(patrol_rules))
         container.add_item(discord.ui.Separator())
 
-        btn = discord.ui.Button(label="Подать заявление", style=discord.ButtonStyle.primary, custom_id="sso_apply_btn",
-                                emoji="📨")
+        btn = discord.ui.Button(
+            label="Подать заявление",
+            style=discord.ButtonStyle.primary,
+            custom_id="sso_apply_btn",
+            emoji="📨",
+        )
         btn.callback = self.on_apply
 
         row = discord.ui.ActionRow()
@@ -81,33 +33,62 @@ class SSOPatrolApplyView(discord.ui.LayoutView):
         self.add_item(container)
 
     async def on_apply(self, interaction: discord.Interaction):
-        user = await get_initiator(interaction)
+        try:
+            user_db = await AuthorizationService.require_active_soldier(interaction)
+            await SSOPatrolService.validate_can_apply(user_db)
+            await interaction.response.send_modal(SSOPatrolModal(user_db))
+        except ServiceError as error:
+            await safe_respond(interaction, error.message)
 
-        min_rank = config.RankIndex.SENIOR_SERGEANT
-        if (user.rank or 0) < min_rank:
-            return await interaction.response.send_message(
-                f"### ❌ Отказано в подаче\n"
-                f"Подать заявление на совместную работу с ССО можно только со звания "
-                f"**{config.RANKS[min_rank]}** и выше.",
-                ephemeral=True,
+
+class SSOPatrolManagementButton(
+    discord.ui.DynamicItem[discord.ui.Button],
+    template=r"sso_mng:(?P<action>\w+):(?P<id>\d+)",
+):
+    def __init__(self, action: str, request_id: int):
+        labels = {"approve": "Одобрить", "reject": "Отклонить"}
+        styles = {"approve": discord.ButtonStyle.success, "reject": discord.ButtonStyle.danger}
+        emojis = {"approve": "👍", "reject": "👎"}
+
+        super().__init__(
+            discord.ui.Button(
+                label=labels.get(action, action),
+                emoji=emojis.get(action),
+                style=styles.get(action, discord.ButtonStyle.secondary),
+                custom_id=f"sso_mng:{action}:{request_id}",
             )
+        )
+        self.action = action
+        self.request_id = request_id
 
-        last_fail = await SSOPatrolRequest.find(
-            SSOPatrolRequest.user_id == interaction.user.id,
-            SSOPatrolRequest.status == "REJECTED",
-            SSOPatrolRequest.reason == "Провал теста"
-        ).sort("-date").first_or_none()
+    @classmethod
+    async def from_custom_id(cls, interaction: discord.Interaction, item: discord.ui.Button, match: re.Match[str]):
+        return cls(match.group("action"), int(match.group("id")))
 
-        if last_fail:
-            now = datetime.datetime.now(datetime.timezone.utc)
-            last_date = last_fail.date.replace(tzinfo=datetime.timezone.utc)
+    async def callback(self, interaction: discord.Interaction):
+        try:
+            officer = await AuthorizationService.require_active_soldier(interaction)
+            await safe_respond(interaction, random_loading_message(), ephemeral=True)
 
-            if (now - last_date).total_seconds() < config.SSO_FAIL_COOLDOWN:
-                retry_ts = int(last_date.timestamp() + config.SSO_FAIL_COOLDOWN)
-                return await interaction.response.send_message(
-                    f"### ⏳ Тест провален\nВы сможете попробовать снова <t:{retry_ts}:R>.",
-                    ephemeral=True
-                )
+            result = await SSOPatrolService.process_sso_patrol(
+                interaction=interaction, request_id=self.request_id, action=self.action, officer=officer,
+            )
+            await safe_edit_message(
+                message=interaction.message,
+                content=build_mentions([result.request.user_id, interaction.user.id]),
+                embed=result.embed,
+                view=result.view,
+            )
+            await safe_respond(interaction, result.message)
 
-        from ui.modals.sso_patrol import SSOPatrolModal
-        await interaction.response.send_modal(SSOPatrolModal(user.full_name or interaction.user.display_name))
+        except ServiceError as error:
+            await safe_respond(interaction, error.message)
+
+
+class SSOPatrolManagementView(discord.ui.View):
+    """Вьюха для управления заявкой на патруль ССО (Одобрить / Отклонить)."""
+
+    def __init__(self, request_id: int):
+        super().__init__(timeout=None)
+        self.add_item(SSOPatrolManagementButton("approve", request_id))
+        self.add_item(SSOPatrolManagementButton("reject", request_id))

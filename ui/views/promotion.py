@@ -1,65 +1,14 @@
 import discord
-from discord import Interaction
-from discord._types import ClientT
 
-import config
+from core import config
+from core.exceptions import ServiceError
 from database import divisions
-from database.models import PromotionRequest, User
-from texts import promotion_title, promotion_description
-from ui.views.indicators import indicator_view
-from utils.audit import AuditAction, audit_logger
-from utils.mongo_lock import try_lock
-from utils.notifications import notify_promoted, notify_promotion_approved, notify_promotion_rejected
-from utils.roles import to_rank, to_division
-from utils.user_data import get_initiator
-
-
-def _can_approve(approver: User, div, report: PromotionRequest) -> tuple[bool, str]:
-    if (approver.rank or 0) >= config.RankIndex.COLONEL:
-        return True, ""
-
-    min_rank = div.promotion_min_rank_review if div.promotion_min_rank_review is not None else config.RankIndex.MAJOR
-    if (approver.rank or 0) < min_rank:
-        return False, f"❌ Для проверки рапортов требуется звание {config.RANKS[min_rank]}+."
-
-    if (approver.rank or 0) <= report.target_rank:
-        return False, f"❌ Для проверки этого рапорта требуется звание {config.RANKS[report.target_rank + 1]}+."
-
-    if div.promotion_reviewer_division_id is not None:
-        if approver.division != div.promotion_reviewer_division_id:
-            reviewer_div = divisions.get_division(div.promotion_reviewer_division_id)
-            name = reviewer_div.name if reviewer_div else "нужное подразделение"
-            return False, f"❌ Рапорты этого подразделения проверяет {name}."
-    else:
-        if approver.division != div.division_id:
-            return False, "❌ Вы не можете проверять рапорты этого подразделения."
-
-    return True, ""
-
-
-def _can_promote(promoter: User, div) -> tuple[bool, str]:
-    if (promoter.rank or 0) >= config.RankIndex.COLONEL:
-        return True, ""
-
-    if (promoter.rank or 0) < config.RankIndex.MAJOR:
-        return False, f"❌ Для повышения требуется звание {config.RANKS[config.RankIndex.MAJOR]}+."
-
-    if div.promotion_reviewer_division_id is not None:
-        if promoter.division != div.promotion_reviewer_division_id:
-            reviewer_div = divisions.get_division(div.promotion_reviewer_division_id)
-            name = reviewer_div.name if reviewer_div else "нужного подразделения"
-            return False, f"❌ Повышение в этом подразделении выполняет {name}."
-    else:
-        if promoter.division != div.division_id:
-            return False, "❌ Вы не можете повышать в этом подразделении."
-
-    return True, ""
-
-def _promotion_view(report_id: int, *actions: str) -> discord.ui.View:
-    view = discord.ui.View(timeout=None)
-    for action in actions:
-        view.add_item(PromoteButton(report_id) if action == "promote" else PromotionManagementButton(action, report_id))
-    return view
+from database.models import User, PromotionRequest
+from services.authorization import AuthorizationService
+from services.promotion import PromotionService
+from texts import promotion_description, promotion_title
+from ui.modals.promotion import PromotionRequestModal
+from utils.helpers import safe_respond, safe_edit_message, random_loading_message, build_mentions, safe_delete_message
 
 
 class PromotionManagementButton(
@@ -68,8 +17,8 @@ class PromotionManagementButton(
 ):
     _config = {
         "approve": ("Одобрить", discord.ButtonStyle.success, "👍"),
-        "reject":  ("Отклонить", discord.ButtonStyle.danger,  "👎"),
-        "cancel":  ("Отменить",  discord.ButtonStyle.grey,    None),
+        "reject": ("Отклонить", discord.ButtonStyle.danger, "👎"),
+        "cancel": ("Отменить", discord.ButtonStyle.grey, None),
     }
 
     def __init__(self, action: str, report_id: int):
@@ -89,109 +38,71 @@ class PromotionManagementButton(
     async def from_custom_id(cls, interaction, item, match):
         return cls(match.group("action"), int(match.group("id")))
 
-    async def _handle_approve(self, interaction: discord.Interaction, report: PromotionRequest):
-        approver = await get_initiator(interaction)
-        div = divisions.get_division(report.division_id)
-        ok, err = _can_approve(approver, div, report)
-        if not ok:
-            await PromotionRequest.get_pymongo_collection().update_one(
-                {"_id": self.report_id}, {"$set": {"status": "PENDING"}}
-            )
-            return await interaction.edit_original_response(content=err)
+    async def _handle_reject_modal(self, interaction: discord.Interaction, officer: User) -> None:
+        req = await PromotionRequest.find_one(PromotionRequest.id == self.report_id)
+        if not req or req.status not in ("PENDING", "APPROVED"):
+            await safe_respond(interaction, f"❌ Рапорт #{self.report_id} не найден или уже обработан.")
+            return
 
-        report.status = "APPROVED"
-        report.reviewer_id = interaction.user.id
-        await report.save()
+        div = divisions.get_division(req.division_id)
+        if not div:
+            await safe_respond(interaction, "❌ Подразделение рапорта не найдено.")
+            return
 
-        view = _promotion_view(report.id, "promote", "reject")
-
-        await interaction.message.edit(
-            content=f"-# ||<@{report.user_id}> <@{interaction.user.id}>||",
-            embed=await report.to_embed(interaction.client),
-            view=view,
-        )
-        await interaction.edit_original_response(content="✅ Рапорт одобрен.")
-
-        await notify_promotion_approved(interaction.client, report.user_id)
-
-    async def _handle_reject(self, interaction: discord.Interaction, report: PromotionRequest):
-        approver = await get_initiator(interaction)
-        div = divisions.get_division(report.division_id)
-        ok, err = _can_approve(approver, div, report)
-        if not ok:
-            return await interaction.response.send_message(err, ephemeral=True)
+        try:
+            PromotionService.validate_can_review(officer, div, req)
+        except ServiceError as error:
+            await safe_respond(interaction, error.message)
+            return
 
         modal = discord.ui.Modal(title="Отклонение рапорта на повышение")
         reason_input = discord.ui.TextInput(
-            label="Причина отклонения",
-            style=discord.TextStyle.paragraph,
-            placeholder="Введите причину отклонения",
-            required=True,
-            max_length=500,
+            label="Причина отклонения", style=discord.TextStyle.paragraph,
+            placeholder="Введите причину отклонения", required=True, max_length=500,
         )
         modal.add_item(reason_input)
 
-        async def on_submit(modal_interaction: discord.Interaction):
-            if not await try_lock(PromotionRequest, self.report_id, "status", "PROCESSING", ["PENDING", "APPROVED"]):
-                return await modal_interaction.response.send_message(
-                    f"❌ Рапорт #{self.report_id} не найден или уже обработан.", ephemeral=True
+        async def on_submit(modal_inter: discord.Interaction):
+            try:
+                result = await PromotionService.reject_promotion(
+                    interaction=modal_inter, request_id=self.report_id, reviewer=officer,
+                    reason=reason_input.value.strip(),
                 )
+            except ServiceError as error:
+                await safe_respond(modal_inter, error.message)
+                return
 
-            report.status = "REJECTED"
-            report.reviewer_id = modal_interaction.user.id
-            report.reject_reason = reason_input.value
-            await report.save()
-
-            await modal_interaction.response.edit_message(
-                content=f"-# ||<@{report.user_id}> <@{modal_interaction.user.id}>||",
-                embed=await report.to_embed(modal_interaction.client),
-                view=indicator_view("Отклонён", emoji="👎"),
+            await modal_inter.response.edit_message(
+                content=build_mentions(result.mention_ids), embed=result.embed, view=result.view,
             )
-
-            await notify_promotion_rejected(modal_interaction.client, report.user_id, reason_input.value)
 
         modal.on_submit = on_submit
         await interaction.response.send_modal(modal)
 
-    async def _handle_cancel(self, interaction: discord.Interaction, report: PromotionRequest):
-        if interaction.user.id != report.user_id:
-            await PromotionRequest.get_pymongo_collection().update_one(
-                {"_id": self.report_id}, {"$set": {"status": "PENDING"}}
-            )
-            return await interaction.edit_original_response(
-                content="❌ Отменить рапорт может только его автор."
-            )
+    async def callback(self, interaction: discord.Interaction):
+        try:
+            officer = await AuthorizationService.require_active_soldier(interaction)
 
-        report.status = "CANCELLED"
-        await report.save()
+            if self.action == "reject":
+                await self._handle_reject_modal(interaction, officer)
+                return
 
-        await interaction.edit_original_response(content="✅ Ваш рапорт был отменен.")
-        await interaction.message.delete()
+            await safe_respond(interaction, random_loading_message())
 
-    async def callback(self, interaction: Interaction[ClientT]):
-        if self.action != "reject":
-            await interaction.response.send_message("⏳ Выполняются действия...", ephemeral=True)
-            if not await try_lock(PromotionRequest, self.report_id, "status", "PROCESSING", "PENDING"):
-                return await interaction.edit_original_response(
-                    content=f"❌ Рапорт #{self.report_id} не найден или уже обработан."
+            if self.action == "approve":
+                result = await PromotionService.approve_promotion(interaction, self.report_id, officer)
+                await safe_edit_message(
+                    message=interaction.message, content=build_mentions(result.mention_ids),
+                    embed=result.embed, view=result.view,
                 )
+                await safe_respond(interaction, result.message)
+            elif self.action == "cancel":
+                await PromotionService.cancel_promotion(self.report_id, interaction.user.id)
+                await safe_delete_message(interaction.message)
+                await safe_respond(interaction, "✅ Ваш рапорт был отменен.")
 
-            report = await PromotionRequest.find_one(PromotionRequest.id == self.report_id)
-
-            match self.action:
-                case "approve":
-                    await self._handle_approve(interaction, report)
-                case "cancel":
-                    await self._handle_cancel(interaction, report)
-            return
-
-        report = await PromotionRequest.find_one(PromotionRequest.id == self.report_id)
-        if not report or report.status not in ("PENDING", "APPROVED"):
-            return await interaction.response.send_message(
-                f"❌ Рапорт #{self.report_id} не найден или уже обработан.", ephemeral=True
-            )
-
-        await self._handle_reject(interaction, report)
+        except ServiceError as error:
+            await safe_respond(interaction, error.message)
 
 
 class PromoteButton(
@@ -213,128 +124,47 @@ class PromoteButton(
     async def from_custom_id(cls, interaction, item, match):
         return cls(int(match.group("id")))
 
-    async def callback(self, interaction: Interaction[ClientT]):
-        promoter = await get_initiator(interaction)
+    async def callback(self, interaction: discord.Interaction):
+        try:
+            promoter = await AuthorizationService.require_active_soldier(interaction)
+            await safe_respond(interaction, random_loading_message())
 
-        await interaction.response.send_message("⏳ Выполняются действия...", ephemeral=True)
-        if not await try_lock(PromotionRequest, self.report_id, "status", "PROCESSING", "APPROVED"):
-            return await interaction.edit_original_response(
-                content=f"❌ Рапорт #{self.report_id} не найден или уже обработан."
+            result = await PromotionService.promote_soldier(
+                interaction=interaction, request_id=self.report_id, promoter=promoter,
             )
-
-        report = await PromotionRequest.find_one(PromotionRequest.id == self.report_id)
-
-        member = await interaction.client.getch_member(report.user_id)
-        if member:
-            user_roles_ids = [role.id for role in member.roles]
-            if any(rid in config.PENALTY_ROLES for rid in user_roles_ids) or config.INVESTIGATION_ROLE in user_roles_ids:
-                await PromotionRequest.get_pymongo_collection().update_one(
-                    {"_id": self.report_id}, {"$set": {"status": "APPROVED"}}
-                )
-                return await interaction.edit_original_response(
-                    content="❌ Невозможно повысить военнослужащего с активными дисциплинарными взысканиями или под расследованием."
-                )
-
-        div = divisions.get_division(report.division_id)
-        ok, err = _can_promote(promoter, div)
-        if not ok:
-            await PromotionRequest.get_pymongo_collection().update_one(
-                {"_id": self.report_id}, {"$set": {"status": "APPROVED"}}
+            await safe_edit_message(
+                message=interaction.message,
+                content=build_mentions(result.mention_ids),
+                embed=result.embed, view=result.view,
             )
-            return await interaction.edit_original_response(content=err)
+            await safe_respond(interaction, result.message)
 
-        user_db = await User.find_one(User.discord_id == report.user_id)
-        if user_db.rank is None:
-            report.status = "REJECTED"
-            report.reviewer_id = interaction.user.id
-            report.reject_reason = "Военнослужащий уволен."
-            await report.save()
+        except ServiceError as error:
+            await safe_respond(interaction, error.message)
 
-            await interaction.message.edit(
-                content=f"-# ||<@{report.user_id}> <@{interaction.user.id}>||",
-                embed=await report.to_embed(interaction.client),
-                view=indicator_view("Отклонён", emoji="👎"),
-            )
-            await interaction.edit_original_response(
-                content="❌ Военнослужащий больше не состоит на службе."
-            )
-            return
 
-        new_division = user_db.division
-        if div.abbreviation.lower() == "ва" and report.target_rank == config.RankIndex.JUNIOR_SERGEANT:
-            if vbp := divisions.get_division_by_abbreviation("ВБП"):
-                new_division = vbp.division_id
+async def _promotion_apply_callback(interaction: discord.Interaction) -> None:
+    """Проверяет возможность подачи рапорта и открывает модалку."""
+    try:
+        user_db = await AuthorizationService.require_active_soldier(interaction)
 
-        result = await User.get_pymongo_collection().update_one(
-            {"discord_id": report.user_id, "rank": report.current_rank},
-            {"$set": {"rank": report.target_rank, "division": new_division}},
+        div = next(
+            (d for d in divisions.divisions if d.promotion_channel == interaction.channel_id),
+            None,
         )
-        if result.modified_count == 0:
-            await PromotionRequest.get_pymongo_collection().update_one(
-                {"_id": self.report_id}, {"$set": {"status": "APPROVED"}}
-            )
-            return await interaction.edit_original_response(
-                content="❌ Ранг военнослужащего изменился после подачи рапорта."
-            )
+        if not div:
+            raise ServiceError("❌ Канал повышений для данного подразделения не настроен.")
 
-        user_db.rank = report.target_rank
-        user_db.division = new_division
+        if (user_db.rank or 0) >= config.RankIndex.CAPTAIN:
+            raise ServiceError("❌ Повышение через рапорт доступно только до звания Капитан.")
 
-        if member:
-            new_roles = to_rank(member.roles, user_db.rank)
-            if user_db.division != report.division_id:
-                new_roles = to_division(new_roles, user_db.division)
-            await member.edit(
-                nick=user_db.discord_nick,
-                roles=new_roles,
-                reason=f"Повышение по рапорту #{report.id} by {interaction.user.id}",
-            )
+        if user_db.division != div.division_id:
+            raise ServiceError("❌ Вы можете подавать рапорт только в своём подразделении.")
 
-        report.status = "PROMOTED"
-        report.promoted_by = interaction.user.id
-        await report.save()
+        await interaction.response.send_modal(PromotionRequestModal(div, user_db))
 
-        await interaction.message.edit(
-            content=f"-# ||<@{report.user_id}> <@{report.reviewer_id}> <@{interaction.user.id}>||",
-            embed=await report.to_embed(interaction.client),
-            view=indicator_view("Повышен", emoji="⭐"),
-        )
-        await interaction.edit_original_response(content="✅ Военнослужащий повышен.")
-
-        await audit_logger.log_action(
-            action=AuditAction.PROMOTED,
-            initiator=interaction.user,
-            target=report.user_id,
-        )
-        await notify_promoted(interaction.client, report.user_id, config.RANKS[report.target_rank])
-
-
-async def _promotion_apply_callback(interaction: discord.Interaction):
-    from ui.modals.promotion import PromotionRequestModal
-
-    div = next(
-        (d for d in divisions.divisions if d.promotion_channel == interaction.channel_id),
-        None,
-    )
-
-    user_db = await get_initiator(interaction)
-    if not user_db or user_db.rank is None:
-        return await interaction.response.send_message(
-            "❌ Вы не состоите на службе.", ephemeral=True
-        )
-
-    if user_db.rank >= config.RankIndex.CAPTAIN:
-        return await interaction.response.send_message(
-            "❌ Повышение через рапорт доступно только до звания Капитан.",
-            ephemeral=True,
-        )
-
-    if user_db.division != div.division_id:
-        return await interaction.response.send_message(
-            "❌ Вы можете подавать рапорт только в своём подразделении.", ephemeral=True
-        )
-
-    await interaction.response.send_modal(PromotionRequestModal(div, user_db))
+    except ServiceError as error:
+        await safe_respond(interaction, error.message)
 
 
 class PromotionApplyView(discord.ui.LayoutView):
@@ -358,3 +188,14 @@ class PromotionApplyView(discord.ui.LayoutView):
         row.add_item(btn)
         container.add_item(row)
         self.add_item(container)
+
+
+class PromotionManagementView(discord.ui.View):
+    """Панель управления рапортом на повышение. Набор кнопок собирается из action-строк."""
+    def __init__(self, report_id: int, *actions: str):
+        super().__init__(timeout=None)
+        for action in actions:
+            if action == "promote":
+                self.add_item(PromoteButton(report_id))
+            else:
+                self.add_item(PromotionManagementButton(action, report_id))

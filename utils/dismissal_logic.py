@@ -1,8 +1,14 @@
 import datetime
+import logging
+
 import discord
-import config
+from core.config import DivisionId, BLACKLIST_MENTIONS, PENALTY_THRESHOLD, CHANNELS
 from database.models import User, Blacklist, LeaveRequest
-from utils.user_data import format_game_id
+from ui.embeds.leave import leave_embed
+from utils.helpers import safe_edit_message, build_mentions
+from utils.user_data import format_static
+
+logger = logging.getLogger(__name__)
 
 
 async def check_and_apply_penalty(
@@ -13,35 +19,35 @@ async def check_and_apply_penalty(
 ) -> bool:
 
     # КМБ не выдаем ЧС за неустойку
-    if target_user_db.division == 8:
+    if target_user_db.division == DivisionId.KMB:
         return False
 
     days_in_organization = (
-        (datetime.datetime.now() - target_user_db.invited_at).days
+        (discord.utils.utcnow() - target_user_db.invited_at).days
         if target_user_db.invited_at
         else None
     )
 
-    if days_in_organization is not None and days_in_organization < config.PENALTY_THRESHOLD:
+    if days_in_organization is not None and days_in_organization < PENALTY_THRESHOLD:
         blacklist = Blacklist(
             initiator=initiator_db.discord_id,
             reason="Неустойка",
             evidence=audit_msg_url,
-            ends_at=datetime.datetime.now() + datetime.timedelta(days=14),
+            ends_at=discord.utils.utcnow() + datetime.timedelta(days=14),
         )
         target_user_db.blacklist = blacklist
 
-        blacklist_channel = interaction.client.get_channel(config.CHANNELS["blacklist"])
+        blacklist_channel = interaction.client.get_channel(CHANNELS["blacklist"])
         if blacklist_channel:
             bl_embed = discord.Embed(
                 title="📋 Автоматический ЧС",
                 color=discord.Color.dark_red(),
-                timestamp=datetime.datetime.now(),
+                timestamp=discord.utils.utcnow(),
             )
-            author_name = f"Составитель: {initiator_db.full_name} | {format_game_id(initiator_db.static)}"
+            author_name = f"Составитель: {initiator_db.full_name} | {format_static(initiator_db.static)}"
             bl_embed.set_author(name=author_name)
 
-            citizen_value = f"<@{target_user_db.discord_id}> {target_user_db.full_name} | {format_game_id(target_user_db.static)}"
+            citizen_value = f"<@{target_user_db.discord_id}> {target_user_db.full_name} | {format_static(target_user_db.static)}"
             bl_embed.add_field(name="Гражданин", value=citizen_value, inline=False)
             bl_embed.add_field(name="Причина", value="Неустойка", inline=False)
             bl_embed.add_field(name="Доказательства", value=f"[Перейти к логу]({audit_msg_url})", inline=False)
@@ -49,11 +55,11 @@ async def check_and_apply_penalty(
             ends_at_fmt = discord.utils.format_dt(blacklist.ends_at, style="d")
             bl_embed.add_field(name="Срок", value=f"14 дней (до {ends_at_fmt})", inline=False)
 
-            mentions_list = [f"<@{target_user_db.discord_id}>", f"<@{initiator_db.discord_id}>"]
-            mentions_list.extend([f"<@&{m}>" for m in config.BLACKLIST_MENTIONS])
-
             await blacklist_channel.send(
-                content=f"-# ||{' '.join(mentions_list)}||",
+                content=build_mentions(
+                [target_user_db.discord_id, initiator_db.discord_id],
+                BLACKLIST_MENTIONS
+                ),
                 embed=bl_embed,
             )
 
@@ -99,10 +105,16 @@ async def cleanup_user_leaves(bot, user_id: int):
 async def _update_leave_message(bot, req: LeaveRequest):
     """Функция для обновления сообщения в канале отпусков."""
     try:
-        channel_id = config.CHANNELS["ic_leave"] if req.leave_type.value == "IC" else config.CHANNELS["ooc_leave"]
+        channel_id = CHANNELS["ic_leave"] if req.leave_type.value == "IC" else CHANNELS["ooc_leave"]
         channel = bot.get_channel(channel_id)
         if channel and req.message_id:
-            msg = await channel.fetch_message(req.message_id)
-            await msg.edit(view=None, embed=await req.to_embed())
+            user_db = await User.get_by_discord_id(req.user_id)
+            await safe_edit_message(
+                channel.get_partial_message(req.message_id),
+                embed=leave_embed(req, user_db),
+                view=None,
+            )
+    except (discord.NotFound, discord.Forbidden):
+        logger.warning("Cannot update leave message for request #%s", req.id)
     except Exception:
-        pass
+        logger.exception("Failed to update leave message for request #%s", req.id)

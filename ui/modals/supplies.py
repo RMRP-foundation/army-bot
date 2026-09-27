@@ -1,5 +1,7 @@
 import discord.ui
 
+from utils.helpers import safe_respond
+
 
 class ItemAmountModal(discord.ui.Modal):
     def __init__(self, item_name: str, current_qty: int = 0):
@@ -18,14 +20,12 @@ class ItemAmountModal(discord.ui.Modal):
 
     async def on_submit(self, interaction: discord.Interaction):
         if not self.amount.value.isdigit():
-            await interaction.response.send_message("❌ Введите число.", ephemeral=True)
+            await safe_respond(interaction, "❌ Введите число.")
             return
 
         qty = int(self.amount.value)
         if qty < 0:
-            await interaction.response.send_message(
-                "❌ Число не может быть отрицательным.", ephemeral=True
-            )
+            await safe_respond(interaction, "❌ Число не может быть отрицательным.")
             return
 
         self.result = qty

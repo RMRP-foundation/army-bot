@@ -1,55 +1,37 @@
-import datetime
 import logging
-import re
 
 import discord
 
-import config
-from config import INVESTIGATION_ROLE, PENALTY_ROLES, EXCLUDED_ROLES
-from database.models import Blacklist, DismissalRequest, DismissalType, User
+from core.exceptions import ServiceError
+from database.models import DismissalType, User, DismissalRequest
+from services.authorization import AuthorizationService
+from services.dismissal import DismissalService
 from ui.modals.dismissal import DismissalModal
-from utils.audit import AuditAction, audit_logger
-from utils.dismissal_logic import check_and_apply_penalty
-from utils.notifications import notify_blacklisted, notify_dismissed
-from utils.user_data import format_game_id, get_initiator
+from utils.helpers import safe_respond, build_mentions, safe_edit_message, safe_delete_message
+from utils.permissions import is_officer, has_disciplinary_restrictions, is_higher_rank
 
 logger = logging.getLogger(__name__)
 
 
-async def open_modal(interaction: discord.Interaction, d_type: DismissalType):
-    user_db = await get_initiator(interaction)
-    if not user_db:
-        await interaction.response.send_message(
-            "❌ Вас нет в базе данных.", ephemeral=True
-        )
+async def _open_dismissal_modal(interaction: discord.Interaction, d_type: DismissalType) -> None:
+    """Проверяет отсутствие ограничений и открывает модалку подачи рапорта."""
+    try:
+        user_db = await AuthorizationService.require_active_soldier(interaction)
+    except ServiceError as error:
+        await safe_respond(interaction, error.message)
         return
 
-    user_roles = [role.id for role in interaction.user.roles]
-    if (
-        any(rid in PENALTY_ROLES for rid in user_roles)
-        or INVESTIGATION_ROLE in user_roles
-    ):
-        await interaction.response.send_message(
+    if has_disciplinary_restrictions(interaction.user):
+        await safe_respond(
+            interaction,
             "❌ Вы не можете подать рапорт на увольнение, "
             "пока у вас есть активные дисциплинарные взыскания "
             "или в отношении вас ведётся расследование.",
-            ephemeral=True,
         )
         return
 
     full_name = user_db.full_name or ""
     await interaction.response.send_modal(DismissalModal(d_type, full_name))
-
-
-async def psj_button_callback(interaction: discord.Interaction):
-    user = await get_initiator(interaction)
-    if not user or user.rank is None:
-        await interaction.response.send_message(
-            "❌ Вы не состоите на службе и не можете подать рапорт на ПСЖ.",
-            ephemeral=True,
-        )
-        return
-    await open_modal(interaction, DismissalType.PJS)
 
 
 class DismissalApplyView(discord.ui.LayoutView):
@@ -67,23 +49,19 @@ class DismissalApplyView(discord.ui.LayoutView):
             "- Заполняйте данные корректно, как в паспорте."
         )
     )
-
     container.add_item(discord.ui.Separator(visible=True))
 
     psj_button = discord.ui.Button(
         label="ПСЖ", style=discord.ButtonStyle.secondary, custom_id="dismissal_pjs"
     )
-
-    psj_button.callback = psj_button_callback
+    psj_button.callback = lambda inter: _open_dismissal_modal(inter, DismissalType.PJS)
 
     transfer_button = discord.ui.Button(
         label="Перевод",
         style=discord.ButtonStyle.primary,
         custom_id="dismissal_transfer",
     )
-    transfer_button.callback = lambda interaction: open_modal(
-        interaction, DismissalType.TRANSFER
-    )
+    transfer_button.callback = lambda inter: _open_dismissal_modal(inter, DismissalType.TRANSFER)
 
     action_row = discord.ui.ActionRow()
     action_row.add_item(psj_button)
@@ -93,208 +71,98 @@ class DismissalApplyView(discord.ui.LayoutView):
 
 class DismissalManagementButton(
     discord.ui.DynamicItem[discord.ui.Button],
-    template=r"dismiss_(?P<action>\w+):(?P<id>\d+)",
+    template=r"dismissal:(?P<action>approve|reject):(?P<id>\d+)",
 ):
     def __init__(self, action: str, request_id: int):
-        labels = {"approve": "Одобрить", "reject": "Отказать"}
-        styles = {
-            "approve": discord.ButtonStyle.success,
-            "reject": discord.ButtonStyle.danger,
-        }
-
-        super().__init__(
-            discord.ui.Button(
-                label=labels.get(action, action),
-                style=styles.get(action, discord.ButtonStyle.secondary),
-                custom_id=f"dismiss_{action}:{request_id}",
-            )
-        )
+        labels = {"approve": ("Одобрить", discord.ButtonStyle.success), "reject": ("Отклонить", discord.ButtonStyle.danger)}
+        label, style = labels[action]
+        super().__init__(discord.ui.Button(label=label, style=style, custom_id=f"dismissal:{action}:{request_id}"))
         self.action = action
         self.request_id = request_id
 
     @classmethod
-    async def from_custom_id(
-        cls,
-        interaction: discord.Interaction,
-        item: discord.ui.Button,
-        match: re.Match[str],
-    ):
+    async def from_custom_id(cls, interaction, item, match):
         return cls(match.group("action"), int(match.group("id")))
 
-    async def callback(self, interaction: discord.Interaction):
-        await interaction.response.send_message("⏳ Выполняются действия...", ephemeral=True)
-
-        from utils.mongo_lock import try_lock
-        if not await try_lock(DismissalRequest, self.request_id, "status", "PROCESSING", "PENDING"):
-            await interaction.edit_original_response(content=f"❌ Заявка #{self.request_id} не найдена или уже обработана.")
-            return
-
-        officer = await get_initiator(interaction)
-        if not officer or (officer.rank or 0) < config.CAPTAIN_RANK_INDEX:
-            await DismissalRequest.get_pymongo_collection().update_one(
-                {"_id": self.request_id}, {"$set": {"status": "PENDING"}}
-            )
-            await interaction.edit_original_response(content="❌ Доступно со звания Капитан.")
-            return
-
+    async def _handle_reject_modal(self, interaction: discord.Interaction, officer: User) -> None:
         req = await DismissalRequest.find_one(DismissalRequest.id == self.request_id)
-
-        if (req.rank_index or 0) >= officer.rank:
-            await DismissalRequest.get_pymongo_collection().update_one(
-                {"_id": self.request_id}, {"$set": {"status": "PENDING"}}
-            )
-            await interaction.edit_original_response(
-                content="❌ Вы не можете увольнять пользователей равного или старшего звания."
-            )
+        if not req or req.status != "PENDING":
+            await safe_respond(interaction, f"❌ Рапорт #{self.request_id} не найден или уже обработан.")
             return
 
-        if self.action == "reject":
-            req.status = "REJECTED"
-            req.reviewer_id = interaction.user.id
-            req.reviewed_at = datetime.datetime.now()
-            await req.save()
+        target_user_db = await User.get_by_discord_id(req.user_id)
+        if not target_user_db or not is_higher_rank(officer, target_user_db):
+            await safe_respond(interaction, "❌ Вы не можете обрабатывать рапорт равного или старшего звания.")
+            return
 
-            embed = await req.to_embed(interaction.client)
+        modal = discord.ui.Modal(title="Отклонение рапорта на увольнение")
+        reason_input = discord.ui.TextInput(
+            label="Причина отказа", style=discord.TextStyle.paragraph, required=True, max_length=500,
+        )
+        modal.add_item(reason_input)
+
+        async def on_submit(modal_inter: discord.Interaction):
             try:
-                await interaction.message.edit(
-                    content=f"<@{req.user_id}> {interaction.user.mention}",
-                    embed=embed,
-                    view=None,
+                result = await DismissalService.reject_dismissal(
+                    interaction=modal_inter, request_id=self.request_id,
+                    officer_user_db=officer, reason=reason_input.value.strip(),
                 )
-            except discord.NotFound:
-                pass
-            await interaction.edit_original_response(content="✅ Рапорт отклонён.")
-            return
-
-        if self.action == "approve":
-            target_user_db = await User.find_one(User.discord_id == req.user_id)
-            if not target_user_db:
-                await DismissalRequest.get_pymongo_collection().update_one(
-                    {"_id": self.request_id}, {"$set": {"status": "PENDING"}}
-                )
-                await interaction.edit_original_response(content="❌ Пользователь не найден в БД.")
+            except ServiceError as error:
+                await safe_respond(modal_inter, error.message)
                 return
 
-            target_user_db.first_name, target_user_db.last_name = req.full_name.split(" ", 1)
-
-            audit_msg = await audit_logger.log_action(
-                AuditAction.DISMISSED,
-                interaction.user,
-                req.user_id,
-                additional_info={
-                    "Причина": f"[Рапорт на увольнение #{req.id}]"
-                               f"({interaction.message.jump_url})"
-                },
+            await modal_inter.response.edit_message(
+                content=build_mentions([result.request.user_id, modal_inter.user.id]),
+                embed=result.embed, view=None,
             )
 
-            penalty_applied = await check_and_apply_penalty(
-                interaction, target_user_db, officer, audit_msg.jump_url
+        modal.on_submit = on_submit
+        await interaction.response.send_modal(modal)
+
+    async def callback(self, interaction: discord.Interaction):
+        try:
+            officer = await AuthorizationService.require_active_soldier(interaction)
+            if not is_officer(officer):
+                raise ServiceError("❌ Доступно со звания Капитан.")
+
+            if self.action == "reject":
+                await self._handle_reject_modal(interaction, officer)
+                return
+
+            result = await DismissalService.approve_dismissal(
+                interaction=interaction, request_id=self.request_id, officer_user_db=officer,
             )
-
-            target_user_db.rank = None
-            target_user_db.division = None
-            target_user_db.position = None
-            await target_user_db.save()
-
-            from utils.dismissal_logic import cleanup_user_leaves
-            await cleanup_user_leaves(interaction.client, req.user_id)
-
-            target_member = await interaction.client.getch_member(req.user_id)
-            if target_member:
-                try:
-                    excluded = set(EXCLUDED_ROLES)
-                    new_roles = [
-                        role for role in target_member.roles
-                        if role.is_default()
-                           or role.id in excluded
-                           or not role.is_assignable()
-                    ]
-
-                    prefix = "Уволен | "
-                    nick_full = target_user_db.full_name
-                    nick_short = target_user_db.short_name
-                    if nick_full and len(prefix + nick_full) <= 32:
-                        new_nick = prefix + nick_full
-                    elif nick_short and len(prefix + nick_short) <= 32:
-                        new_nick = prefix + nick_short
-                    else:
-                        new_nick = prefix + (nick_full or nick_short or "Неизвестный")
-                    await target_member.edit(
-                        nick=new_nick[:32],
-                        roles=new_roles,
-                        reason=f"Увольнение по рапорту #{req.id}",
-                    )
-                except discord.Forbidden:
-                    await interaction.followup.send(
-                        "⚠️ Не удалось обновить роли/ник в Discord (нет прав).",
-                        ephemeral=True,
-                    )
-                except Exception as e:
-                    logger.error(f"Error processing dismissal discord actions: {e}")
-
-            req.status = "APPROVED"
-            req.reviewer_id = interaction.user.id
-            req.reviewed_at = datetime.datetime.now()
-            await req.save()
-
-            await notify_dismissed(
-                interaction.client, req.user_id, f"Увольнение по рапорту #{req.id}", by_report=True
-            )
-
-            embed = await req.to_embed(interaction.client)
-            if penalty_applied:
-                embed.set_footer(text="Автоматически выдан ЧС за неустойку.")
-                await notify_blacklisted(interaction.client, req.user_id, "Неустойка", "14 дней")
-
-            await interaction.message.edit(
-                content=f"<@{req.user_id}> {interaction.user.mention}",
-                embed=embed,
+            await safe_edit_message(
+                message=interaction.message,
+                content=build_mentions([result.request.user_id, interaction.user.id]),
+                embed=result.embed,
                 view=None,
             )
-            await interaction.edit_original_response(content="✅ Рапорт одобрен, сотрудник уволен.")
+            await safe_respond(interaction, "✅ Рапорт одобрен, сотрудник уволен.")
+
+        except ServiceError as error:
+            await safe_respond(interaction, error.message)
+
 
 class DismissalCancelButton(
-    discord.ui.DynamicItem[discord.ui.Button], template=r"dismiss:cancel:(?P<id>\d+)"
+    discord.ui.DynamicItem[discord.ui.Button],
+    template=r"dismissal_cancel:(?P<id>\d+)",
 ):
     def __init__(self, request_id: int):
-        super().__init__(
-            discord.ui.Button(
-                label="Отменить",
-                style=discord.ButtonStyle.grey,
-                custom_id=f"dismiss:cancel:{request_id}",
-            )
-        )
+        super().__init__(discord.ui.Button(label="Отменить", style=discord.ButtonStyle.grey, custom_id=f"dismissal_cancel:{request_id}"))
         self.request_id = request_id
 
     @classmethod
-    async def from_custom_id(
-        cls,
-        interaction: discord.Interaction,
-        item: discord.ui.Button,
-        match: re.Match[str],
-    ):
+    async def from_custom_id(cls, interaction, item, match):
         return cls(int(match.group("id")))
 
     async def callback(self, interaction: discord.Interaction):
-        req = await DismissalRequest.find_one(
-            DismissalRequest.id == self.request_id,
-            DismissalRequest.user_id == interaction.user.id,
-        )
-        if not req or req.status != "PENDING":
-            await interaction.response.send_message(
-                "❌ Заявка не найдена или уже обработана.", ephemeral=True
-            )
-            return
-
-        req.status = "REJECTED"
-        req.reviewer_id = interaction.user.id
-        req.reviewed_at = datetime.datetime.now()
-        await req.save()
-
-        await interaction.response.send_message(
-            content="✅ Ваш рапорт был отменен.", ephemeral=True
-        )
-        await interaction.message.delete()
+        try:
+            await DismissalService.cancel_dismissal(interaction=interaction, request_id=self.request_id)
+            await safe_delete_message(interaction.message)
+            await safe_respond(interaction, "✅ Ваш рапорт на увольнение был отменен.", ephemeral=True)
+        except ServiceError as error:
+            await safe_respond(interaction, error.message)
 
 
 class DismissalManagementView(discord.ui.View):

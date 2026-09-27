@@ -4,10 +4,10 @@ from typing import Dict
 
 import discord
 from beanie import Document, Indexed
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
+from pymongo import IndexModel
 
-import config
-from utils.user_data import format_game_id, display_rank, transliterate_abbreviation
+from core import constants
 
 
 class Privilege(Enum):
@@ -33,8 +33,6 @@ class Division(Document):
     emoji: str | None = None
     positions: list[Position] | None = None
     promotion_channel: int | None = None
-    promotion_min_rank_review: int | None = None
-    promotion_reviewer_division_id: int | None = None
 
     def get_position_by_name(self, name: str) -> Position | None:
         if not self.positions:
@@ -57,7 +55,7 @@ class Blacklist(BaseModel):
     def __bool__(self):
         if self.ends_at is None:
             return True
-        return datetime.datetime.now() < self.ends_at
+        return discord.utils.utcnow() < self.ends_at
 
 
 class User(Document):
@@ -89,6 +87,7 @@ class User(Document):
     @property
     def discord_nick(self) -> str:
         from database import divisions
+        from utils.user_data import transliterate_abbreviation
 
         parts = []
         if self.leave_status:
@@ -102,7 +101,7 @@ class User(Document):
                 else:
                     parts.append(transliterate_abbreviation(div.abbreviation))
         if self.rank is not None:
-            parts.append(config.RANKS_SHORT[self.rank])
+            parts.append(constants.RANKS_SHORT[self.rank])
         if self.full_name:
             if len(" | ".join(parts + [self.full_name])) > 32:
                 parts.append(self.short_name or self.full_name)
@@ -110,8 +109,36 @@ class User(Document):
                 parts.append(self.full_name)
         return " | ".join(parts)[:32]
 
+    @staticmethod
+    async def get_active_soldier(discord_id: int) -> "User | None":
+        """Возвращает пользователя, если он состоит на службе (rank задан), иначе None.
+
+        Args:
+            discord_id: Discord ID пользователя.
+
+        Returns:
+            User или None.
+        """
+        user = await User.get_by_discord_id(discord_id)
+        if not user or user.rank is None:
+            return None
+        return user
+
+    @classmethod
+    async def get_by_discord_id(cls, discord_id: int) -> "User | None":
+        """Находит пользователя в базе данных по его Discord ID.
+
+        Args:
+            discord_id: Discord ID пользователя.
+
+        Returns:
+            Объект User, если пользователь найден; в противном случае None.
+        """
+        return await cls.find_one(cls.discord_id == discord_id)
+
     class Settings:
         name = "users"
+        indexes = [IndexModel([("division", 1), ("rank", -1)])]
 
 
 class ReinstatementData(BaseModel):
@@ -124,45 +151,10 @@ class ReinstatementRequest(Document):
     id: int
     user: int
     data: ReinstatementData
-    approved: bool = False
-    checked: bool = False
+    status: str = "PENDING"
     rank: int | None = None
-    sent_at: datetime.datetime = Field(default_factory=datetime.datetime.now)
-
-    async def to_embed(self):
-        user = await User.find_one(User.discord_id == self.user)
-
-        status = (
-            "одобрено"
-            if self.approved
-            else "отклонено"
-            if self.checked
-            else "на рассмотрении"
-        )
-        emoji = "✅" if self.approved else "❌" if self.checked else "⏳"
-        colour = (
-            discord.Colour.dark_green()
-            if self.approved
-            else discord.Colour.dark_red()
-            if self.checked
-            else discord.Colour.gold()
-        )
-
-        e = discord.Embed(
-            title=f"{emoji} Заявление {status}", colour=colour, timestamp=self.sent_at
-        )
-        e.add_field(name="Заявитель", value=f"{self.data.full_name}")
-        e.add_field(name="Статик", value=format_game_id(user.static))
-        e.add_field(name="Все документы", value=self.data.all_documents, inline=False)
-        e.add_field(name="Военный билет", value=self.data.army_pass, inline=False)
-        e.set_footer(text="Отправлено")
-
-        if self.rank is not None:
-            e.add_field(
-                name="Полученное звание", value=display_rank(self.rank), inline=False
-            )
-
-        return e
+    reject_reason: str | None = None
+    sent_at: datetime.datetime = Field(default_factory=discord.utils.utcnow)
 
     class Settings:
         name = "reinstatement_requests"
@@ -199,61 +191,6 @@ class RoleRequest(Document):
     sent_at: datetime.datetime = Field(default_factory=discord.utils.utcnow)
     message_id: int | None = None
 
-    def _get_role_type_name(self) -> str:
-        names = {
-            RoleType.ARMY: "ВС РФ",
-            RoleType.KMB: "КМБ",
-            RoleType.SUPPLY_ACCESS: "Доступ к поставке",
-            RoleType.GOV_EMPLOYEE: "Гос. сотрудник",
-        }
-        return names.get(self.role_type, "Неизвестно")
-
-    async def to_embed(self):
-        status_map = {
-            "PENDING": ("⏳", discord.Colour.gold(), "на рассмотрении"),
-            "PROCESSING": ("⏳", discord.Colour.gold(), "на рассмотрении"),
-            "APPROVED": ("✅", discord.Colour.dark_green(), "одобрено"),
-            "REJECTED": ("❌", discord.Colour.dark_red(), "отклонено"),
-        }
-        emoji, colour, status = status_map.get(self.status, ("❓", discord.Colour.default(), "неизвестно"))
-
-        role_name = self._get_role_type_name()
-        e = discord.Embed(
-            title=f"{emoji} Заявление на роль «{role_name}» {status}",
-            colour=colour,
-            timestamp=self.sent_at,
-        )
-
-        if self.role_type in [RoleType.ARMY, RoleType.KMB] and self.data:
-            e.add_field(name="Заявитель", value=self.data.full_name)
-            e.add_field(name="Статик", value=format_game_id(self.data.static_id))
-        elif self.extended_data:
-            e.add_field(name="Имя Фамилия", value=self.extended_data.full_name)
-            e.add_field(
-                name="Статик", value=format_game_id(self.extended_data.static_id)
-            )
-            e.add_field(name="Фракция", value=self.extended_data.faction, inline=False)
-            e.add_field(
-                name="Звание, должность",
-                value=self.extended_data.rank_position,
-                inline=False,
-            )
-            if self.extended_data.purpose:
-                e.add_field(
-                    name="Цель и удостоверение",
-                    value=self.extended_data.purpose,
-                    inline=False,
-                )
-            if self.extended_data.certificate_link:
-                e.add_field(
-                    name="Удостоверение",
-                    value=self.extended_data.certificate_link,
-                    inline=False,
-                )
-
-        e.set_footer(text="Отправлено")
-        return e
-
     class Settings:
         name = "role_requests"
 
@@ -266,46 +203,6 @@ class TimeoffRequest(Document):
     sent_at: datetime.datetime = Field(default_factory=discord.utils.utcnow)
     reviewed_at: datetime.datetime | None = None
 
-    async def to_embed(self):
-        status_map = {
-            "PENDING": ("⏳", discord.Colour.gold()),
-            "PROCESSING": ("⏳", discord.Colour.gold()),
-            "APPROVED": ("✅", discord.Colour.dark_green()),
-            "REJECTED": ("❌", discord.Colour.dark_red()),
-        }
-        emoji, colour = status_map.get(self.status, ("❓", discord.Colour.default()))
-
-        e = discord.Embed(
-            title=f"{emoji} Заявление на отгул #{self.id}",
-            colour=colour,
-            timestamp=self.sent_at,
-        )
-
-        e.add_field(name="Заявитель", value=self.data.full_name)
-        e.add_field(name="Статик", value=format_game_id(self.data.static_id))
-
-        requester = await User.find_one(User.discord_id == self.user_id)
-        from database import divisions
-
-        # Safely determine rank and division name in case requester or division is missing
-        rank_value = "Неизвестно"
-        division_name = "Неизвестно"
-
-        if requester is not None:
-            rank_value = display_rank(requester.rank)
-
-            division = divisions.get_division(requester.division)
-            if division is not None:
-                division_name = division.name
-
-        e.add_field(name="Звание", value=rank_value)
-        e.add_field(name="Подразделение", value=division_name, inline=False)
-        e.add_field(name="Время", value=self.period)
-
-
-        e.set_footer(text="Отправлено")
-        return e
-
     class Settings:
         name = "timeoff_requests"
 
@@ -316,54 +213,15 @@ class SupplyRequest(Document):
     items: Dict[str, int] = Field(default_factory=dict)
     status: str = "PENDING"
     reviewer_id: int | None = None
-    created_at: datetime.datetime = Field(default_factory=datetime.datetime.now)
+    created_at: datetime.datetime = Field(default_factory=discord.utils.utcnow)
     reviewed_at: datetime.datetime | None = None
     message_id: int | None = None  # ID сообщения в канале
 
-    async def to_embed(self, bot):
-        requester = await User.find_one(User.discord_id == self.user_id)
-        requester_game_id = (
-            format_game_id(requester.static) if requester else "Неизвестно"
-        )
-        requester_name = requester.full_name if requester else f"<@{self.user_id}>"
-
-        status_map = {
-            "PENDING": ("⏳ На рассмотрении", discord.Color.gold()),
-            "APPROVED": ("✅ Одобрено", discord.Color.green()),
-            "REJECTED": ("❌ Отклонено", discord.Color.red()),
-            "DRAFT": ("📝 Черновик", discord.Color.light_grey()),
-        }
-        title, color = status_map.get(
-            self.status, ("❓ Неизвестно", discord.Color.default())
-        )
-
-        embed = discord.Embed(
-            title=f"Заявка на склад #{self.id}", color=color, timestamp=self.created_at
-        )
-        embed.add_field(
-            name="Запросил",
-            value=f"{requester_name} ({requester_game_id})",
-            inline=False,
-        )
-
-        items_str = ""
-        if self.items:
-            for item, amount in self.items.items():
-                items_str += f"• **{item}**: {amount} шт.\n"
-        else:
-            items_str = "Список пуст"
-
-        embed.add_field(name="Список предметов", value=items_str, inline=False)
-
-        if self.reviewer_id:
-            embed.add_field(
-                name="Рассмотрел", value=f"<@{self.reviewer_id}>", inline=False
-            )
-
-        return embed
-
     class Settings:
         name = "supply_requests"
+        indexes = [
+            IndexModel([("user_id", 1), ("status", 1), ("created_at", -1)])
+        ]
 
 
 class DismissalType(str, Enum):
@@ -382,64 +240,12 @@ class DismissalRequest(Document):
     rank_index: int | None = None
     division_id: int | None = None
     position: str | None = None
+    reject_reason: str | None = None
 
     status: str = "PENDING"  # PENDING, APPROVED, REJECTED
     reviewer_id: int | None = None
-    created_at: datetime.datetime = Field(default_factory=datetime.datetime.now)
+    created_at: datetime.datetime = Field(default_factory=discord.utils.utcnow)
     reviewed_at: datetime.datetime | None = None
-
-    async def to_embed(self, bot):
-        from database import divisions
-
-        status_map = {
-            "PENDING": ("⏳", discord.Color.gold()),
-            "APPROVED": ("✅", discord.Color.green()),
-            "REJECTED": ("❌", discord.Color.red()),
-        }
-        title_prefix, color = status_map.get(
-            self.status, ("❓", discord.Color.default())
-        )
-
-        if self.type == DismissalType.AUTO:
-            title_text = "Автоматический рапорт на увольнение"
-        else:
-            title_text = "Рапорт на увольнение"
-
-        embed = discord.Embed(
-            title=f"{title_prefix} {title_text} #{self.id}",
-            color=color,
-            timestamp=self.created_at,
-        )
-
-        embed.add_field(name="Имя Фамилия", value=self.full_name, inline=True)
-        embed.add_field(
-            name="Номер паспорта", value=format_game_id(self.static), inline=True
-        )
-
-        embed.add_field(name="Звание", value=display_rank(self.rank_index), inline=False)
-
-        div_name = (
-            divisions.get_division_name(self.division_id) if self.division_id else "Нет"
-        )
-        embed.add_field(name="Подразделение", value=div_name, inline=True)
-
-        if self.position:
-            embed.add_field(name="Должность", value=self.position, inline=True)
-        embed.add_field(name="Причина", value=self.type.value, inline=False)
-
-        if self.reviewer_id:
-            embed.add_field(
-                name="Рассмотрел",
-                value=f"<@{self.reviewer_id}>"
-                + (
-                    f" в {discord.utils.format_dt(self.reviewed_at)}"
-                    if self.reviewed_at
-                    else ""
-                ),
-                inline=False,
-            )
-
-        return embed
 
     class Settings:
         name = "dismissal_requests"
@@ -460,98 +266,10 @@ class TransferRequest(Document):
     status: str  # OLD_DIVISION_REVIEW, NEW_DIVISION_REVIEW, APPROVED, REJECTED
     old_reviewer_id: int | None = None
     new_reviewer_id: int | None = None
-    created_at: datetime.datetime = Field(default_factory=datetime.datetime.now)
+    created_at: datetime.datetime = Field(default_factory=discord.utils.utcnow)
     old_reviewed_at: datetime.datetime | None = None
     new_reviewed_at: datetime.datetime | None = None
     reject_reason: str | None = None
-
-    async def to_embed(self, bot):
-        from database import divisions
-
-        user = await User.find_one(User.discord_id == self.user_id)
-
-        old_div = (
-            divisions.get_division(self.old_division_id)
-            if self.old_division_id
-            else None
-        )
-        new_div = divisions.get_division(self.new_division_id)
-
-        old_abbr = old_div.abbreviation if old_div else "Нет"
-        new_abbr = new_div.abbreviation if new_div else "Нет"
-
-        status_map = {
-            "OLD_DIVISION_REVIEW": (
-                f"🔵 Рассматривается в {old_abbr}",
-                discord.Color.blue(),
-            ),
-            "NEW_DIVISION_REVIEW": (
-                f"🟠 Рассматривается в {new_abbr}",
-                discord.Color.orange(),
-            ),
-            "APPROVED": ("✅ Одобрена", discord.Color.dark_green()),
-            "REJECTED": ("❌ Отклонена", discord.Color.dark_red()),
-        }
-        title, color = status_map.get(
-            self.status, ("❓ Неизвестно", discord.Color.default())
-        )
-
-        embed = discord.Embed(
-            title=f"{title[0]} Заявка #{self.id} - {title[1:].strip()}",
-            color=color,
-            timestamp=self.created_at,
-        )
-
-        embed.add_field(name="Имя Фамилия", value=self.full_name, inline=True)
-        embed.add_field(
-            name="Номер паспорта", value=format_game_id(self.static), inline=True
-        )
-        embed.add_field(
-            name="Звание",
-            value=display_rank(user.rank),
-            inline=False,
-        )
-        embed.add_field(
-            name="Возраст и имя в реальной жизни", value=self.name_age, inline=False
-        )
-        embed.add_field(name="Часовой пояс", value=self.timezone, inline=True)
-        embed.add_field(
-            name="Онлайн и прайм тайм", value=self.online_prime, inline=True
-        )
-        embed.add_field(name="Мотивация", value=self.motivation, inline=False)
-
-        if old_div and old_div.positions:
-            embed.add_field(
-                name="Старое подразделение", value=old_div.name, inline=True
-            )
-
-        if self.old_reviewer_id:
-            embed.add_field(
-                name=f"Рассматривающий (с {old_abbr})",
-                value=f"<@{self.old_reviewer_id}>"
-                + (
-                    f" в {discord.utils.format_dt(self.old_reviewed_at)}"
-                    if self.old_reviewed_at
-                    else ""
-                ),
-                inline=False,
-            )
-        if self.new_reviewer_id:
-            embed.add_field(
-                name=f"Рассматривающий (в {new_abbr})",
-                value=f"<@{self.new_reviewer_id}>"
-                + (
-                    f" в {discord.utils.format_dt(self.new_reviewed_at)}"
-                    if self.new_reviewed_at
-                    else ""
-                ),
-                inline=False,
-            )
-        if self.reject_reason:
-            embed.add_field(
-                name="Причина отклонения", value=self.reject_reason, inline=False
-            )
-        return embed
 
     class Settings:
         name = "transfer_requests"
@@ -561,68 +279,21 @@ class SSOPatrolRequest(Document):
     user_id: int
     full_name: str
     reason: str
-    date: datetime.datetime = Field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc))
+    date: datetime.datetime = Field(default_factory=discord.utils.utcnow)
     status: str = "PENDING"
     reviewer_id: int | None = None
-
-    async def to_embed(self, bot, failed_question=None):
-        user = await User.find_one(User.discord_id == self.user_id)
-        today = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=3))).strftime('%d.%m.%Y')
-
-        if failed_question:
-            title = "❌ Провал проверки знаний"
-            color = discord.Color.red()
-        else:
-            title = f"Запрос формы Сил Специальных Операций #{self.id}"
-            status_colors = {
-                "PENDING": discord.Color.gold(),
-                "APPROVED": discord.Color.green(),
-                "REJECTED": discord.Color.red(),
-            }
-            color = status_colors.get(self.status, discord.Color.blue())
-
-        embed = discord.Embed(title=title, color=color)
-        embed.add_field(name="Имя Фамилия", value=self.full_name, inline=True)
-        embed.add_field(name="Статик", value=format_game_id(user.static), inline=True)
-        embed.add_field(name="Звание", value=display_rank(user.rank), inline=False)
-
-        if failed_question:
-            embed.add_field(name="Вопрос", value=failed_question, inline=False)
-        else:
-            embed.add_field(name="Причина", value=self.reason, inline=False)
-
-        embed.set_footer(text=f"Дата: {today}")
-
-        return embed
 
     class Settings:
         name = "sso_patrol_requests"
 
 
 class MaterialsReport(Document):
+    id: int
     user_id: int
     full_name: str
     quantity: int
     evidence: str
-    created_at: datetime.datetime = Field(
-        default_factory=lambda: datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=3)))
-    )
-
-    async def to_embed(self, user: User):
-        price = f"{self.quantity * config.MATERIAL_PRICE:,}".replace(',', '.')
-
-        embed = discord.Embed(
-            title="Отчет о продаже материалов",
-            color=discord.Color.gold(),
-            timestamp=self.created_at
-        )
-        embed.add_field(name="Имя Фамилия", value=self.full_name)
-        embed.add_field(name="Статик", value=format_game_id(user.static))
-        embed.add_field(name="Звание", value=display_rank(user.rank), inline=False)
-        embed.add_field(name="Количество", value=f"{self.quantity:,} ед.".replace(",", "."), inline=True)
-        embed.add_field(name="Сумма", value=f"{price} ₽", inline=True)
-        embed.add_field(name="Доказательства", value=self.evidence, inline=False)
-        return embed
+    created_at: datetime.datetime = Field(default_factory=discord.utils.utcnow)
 
     class Settings:
         name = "materials_reports"
@@ -643,26 +314,7 @@ class LogisticsRequest(Document):
     status: str = "PENDING"  # PENDING, APPROVED, REJECTED, EXPIRED
     reviewer_name: str | None = None
     message_id: int | None = None
-    created_at: datetime.datetime = Field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc))
-
-    async def to_embed(self):
-        status_map = {
-            "PENDING": discord.Color.gold(),
-            "APPROVED": discord.Color.green(),
-            "REJECTED": discord.Color.red(),
-            "EXPIRED": discord.Color.dark_grey(),
-        }
-        color = status_map.get(self.status, discord.Color.default())
-
-        embed = discord.Embed(
-            title=f"Поставка: {self.supply_type.value}",
-            color=color,
-            timestamp=self.created_at
-        )
-        embed.add_field(name="Заявитель", value=self.nickname, inline=True)
-        embed.add_field(name="Организация", value=self.faction, inline=True)
-
-        return embed
+    created_at: datetime.datetime = Field(default_factory=discord.utils.utcnow)
 
     class Settings:
         name = "logistics_requests"
@@ -691,66 +343,9 @@ class LeaveRequest(Document):
     approved_at: datetime.datetime | None = None
     message_id: int | None = None
 
-    async def to_embed(self) -> discord.Embed:
-        from database import divisions
-
-        status_map = {
-            "PENDING": ("⏳", discord.Color.gold()),
-            "APPROVED": ("✅", discord.Color.green()),
-            "REJECTED": ("❌", discord.Color.red()),
-            "EXPIRED": ("🕐", discord.Color.dark_grey()),
-            "ANNULLED": ("🚫", discord.Color.dark_grey()),
-        }
-        emoji, color = status_map.get(
-            self.status, ("❓", discord.Color.default())
-        )
-
-        def to_utc(dt: datetime.datetime | None):
-            if dt is None: return None
-            return dt.replace(tzinfo=datetime.timezone.utc) if dt.tzinfo is None else dt
-
-        e = discord.Embed(
-            title=f"{emoji} Заявление на {self.leave_type.value} отпуск #{self.id}",
-            color=color,
-            timestamp=to_utc(self.created_at),
-        )
-
-        requester = await User.find_one(User.discord_id == self.user_id)
-        e.add_field(name="Имя Фамилия", value=requester.full_name, inline=True)
-        e.add_field(name="Статик", value=format_game_id(requester.static), inline=True)
-
-        e.add_field(name="Звание", value=display_rank(requester.rank), inline=False)
-        div_name = divisions.get_division_name(requester.division) or "Нет"
-        e.add_field(name="Подразделение", value=div_name, inline=False)
-
-        e.add_field(name="Дата начала", value=discord.utils.format_dt(to_utc(self.starts_at), "d"), inline=True)
-        e.add_field(name="Дата выхода", value=discord.utils.format_dt(to_utc(self.ends_at), "d"), inline=True)
-
-        e.add_field(name="Причина", value=self.reason, inline=False)
-
-        if self.reviewer_id and (approved_at := to_utc(self.approved_at)):
-            e.add_field(
-                name="Рассмотрел",
-                value=(f"<@{self.reviewer_id}> "
-                      f"{discord.utils.format_dt(approved_at, 'R')}"),
-                inline=True
-            )
-
-        if self.annuller_id and (annulled_at := to_utc(self.annulled_at)):
-            e.add_field(
-                name="Аннулировал",
-                value=(
-                    f"<@{self.annuller_id}> "
-                    f"{discord.utils.format_dt(annulled_at, 'R')}"
-                ),
-                inline=False,
-            )
-
-        e.set_footer(text="Отправлено")
-        return e
-
     class Settings:
         name = "leave_requests"
+        indexes = [IndexModel([("status", 1), ("ends_at", 1)])]
 
 
 class PromotionRequest(Document):
@@ -765,57 +360,12 @@ class PromotionRequest(Document):
     status: str = "PENDING"  # PENDING, APPROVED, PROMOTED, REJECTED, CANCELLED
     reviewer_id: int | None = None
     promoted_by: int | None = None
-    created_at: datetime.datetime = Field(default_factory=datetime.datetime.now)
+    created_at: datetime.datetime = Field(default_factory=discord.utils.utcnow)
     message_id: int | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def convert_old_evidence(cls, data):
-        if not isinstance(data, dict):
-            return data
-
-        raw_evidence = data.get("evidence")
-        if isinstance(raw_evidence, str):
-            data["evidence"] = {"Доказательства": raw_evidence}
-        return data
-
-    async def to_embed(self, bot) -> discord.Embed:
-        status_map = {
-            "PENDING":   ("⏳", discord.Color.gold(),       "На рассмотрении"),
-            "APPROVED":  ("✅", discord.Color.blurple(),    "Одобрен"),
-            "PROMOTED":  ("⭐", discord.Color.dark_green(), "Повышен"),
-            "REJECTED":  ("❌", discord.Color.dark_red(),   "Отклонён"),
-        }
-        emoji, color, label = status_map.get(self.status, ("❓", discord.Color.default(), "Неизвестно"))
-
-        requester = await User.find_one(User.discord_id == self.user_id)
-
-        e = discord.Embed(
-            title=f"{emoji} Рапорт #{self.id} — {label}",
-            color=color,
-            timestamp=self.created_at,
-        )
-        e.add_field(name="Имя Фамилия", value=requester.full_name, inline=True)
-        e.add_field(name="Статик", value=format_game_id(requester.static), inline=True)
-        e.add_field(name="Звание", value=f"{display_rank(self.current_rank)}  ⟶ {display_rank(self.target_rank)}", inline=False)
-
-        if self.evidence:
-            for title, content in self.evidence.items():
-                if content and content.strip():
-                    e.add_field(name=title, value=content, inline=False)
-
-        if self.score:
-            e.add_field(name="Баллы", value=self.score, inline=False)
-        if self.reject_reason:
-            e.add_field(name="Причина отказа", value=self.reject_reason, inline=False)
-        if self.reviewer_id:
-            e.add_field(name="Проверил", value=f"<@{self.reviewer_id}>", inline=True)
-        if self.promoted_by:
-            e.add_field(name="Повысил", value=f"<@{self.promoted_by}>", inline=True)
-        return e
 
     class Settings:
         name = "promotion_reports"
+        indexes = [IndexModel([("user_id", 1), ("status", 1)])]
 
 
 class BottomMessage(Document):

@@ -1,76 +1,117 @@
+from dataclasses import dataclass
+
 import discord
+from discord.ext import commands
 
-import config
-from database.models import User
-
-
-async def get_user_rank(user_id: int) -> int | None:
-    """Получить ранг пользователя по его Discord ID"""
-    user = await User.find_one(User.discord_id == user_id)
-    return user.rank if user else None
+from core import config, constants
+from database.models import User, Privilege
 
 
-async def check_rank(
-    interaction: discord.Interaction, min_rank: int, error_message: str | None = None
-) -> bool:
-    """
-    Проверяет, имеет ли пользователь минимальный требуемый ранг.
+def is_service_account(discord_id: int) -> bool:
+    return discord_id in config.SERVICE_ACCOUNT_IDS
 
-    Args:
-        interaction: Discord Interaction
-        min_rank: Минимальный индекс ранга (используйте config.RankIndex)
-        error_message: Сообщение об ошибке (по умолчанию генерируется автоматически)
+def is_service():
+    async def predicate(ctx: commands.Context) -> bool:
+        return is_service_account(ctx.author.id)
+    return commands.check(predicate)
 
-    Returns:
-        True если пользователь имеет достаточный ранг, False иначе
-    """
-    user = await User.find_one(User.discord_id == interaction.user.id)
+def is_higher_rank(officer: User, target: User) -> bool:
+    """Возвращает True, если звание офицера строго выше звания целевого бойца."""
+    if is_service_account(officer.discord_id):
+        return True
+    return (officer.rank or 0) > (target.rank or 0)
 
-    if not user or (user.rank or 0) < min_rank:
-        if error_message is None:
-            rank_name = (
-                config.RANKS[min_rank]
-                if min_rank < len(config.RANKS)
-                else f"ранг {min_rank}"
-            )
-            error_message = f"❌ Доступно со звания {rank_name}."
-
-        await interaction.response.send_message(error_message, ephemeral=True)
-        return False
-
-    return True
-
-
-async def check_rank_silent(user_id: int, min_rank: int) -> bool:
+def check_rank_silent(user: User, min_rank: int) -> bool:
     """
     Проверяет ранг без отправки сообщения об ошибке.
 
     Args:
-        user_id: Discord ID пользователя
+        user: Объект пользователя из базы данных
         min_rank: Минимальный индекс ранга
 
     Returns:
         True если пользователь имеет достаточный ранг
     """
-    user = await User.find_one(User.discord_id == user_id)
+    if user is not None and is_service_account(user.discord_id):
+        return True
     return user is not None and (user.rank or 0) >= min_rank
 
-
-async def is_officer(user_id: int) -> bool:
+def is_officer(user: User) -> bool:
     """Проверка на офицера (Капитан+)"""
-    return await check_rank_silent(user_id, config.RankIndex.CAPTAIN)
+    return check_rank_silent(user, config.RankIndex.CAPTAIN)
 
-
-async def is_senior_officer(user_id: int) -> bool:
+def is_senior_officer(user: User) -> bool:
     """Проверка на старшего офицера (Майор+)"""
-    return await check_rank_silent(user_id, config.RankIndex.MAJOR)
+    return check_rank_silent(user, config.RankIndex.MAJOR)
 
-
-async def is_high_command(user_id: int) -> bool:
+def is_high_command(user: User) -> bool:
     """Проверка на высшее командование (Полковник+)"""
-    return await check_rank_silent(user_id, config.RankIndex.COLONEL)
+    return check_rank_silent(user, config.RankIndex.COLONEL)
 
-
-async def is_general(user_id: int) -> bool:
+def is_general(user: User) -> bool:
     """Проверка на генерала (Генерал-майор+)"""
-    return await check_rank_silent(user_id, config.RankIndex.MAJOR_GENERAL)
+    return check_rank_silent(user, config.RankIndex.MAJOR_GENERAL)
+
+
+def has_penalty_roles(member: discord.Member) -> bool:
+    """Проверяет наличие ролей предупреждений/выговоров (PENALTY_ROLES)."""
+    if not member:
+        return False
+    return any(r.id in config.PENALTY_ROLES for r in member.roles)
+
+def is_under_investigation(member: discord.Member) -> bool:
+    """Проверяет роль 'Ведется расследование'."""
+    if not member:
+        return False
+    return any(r.id == config.INVESTIGATION_ROLE for r in member.roles)
+
+def has_disciplinary_restrictions(member: discord.Member, check_investigation: bool = True) -> bool:
+    """Общая проверка: выговоры + (опционально) расследование."""
+    if has_penalty_roles(member):
+        return True
+    return check_investigation and is_under_investigation(member)
+
+def can_assign_position(
+    editor_discord_id: int,
+    editor_division_id: int,
+    editor_privilege: Privilege | None,
+    target_division_id: int,
+    target_privilege: Privilege,
+) -> bool:
+    if is_service_account(editor_discord_id):
+        return True
+
+    if editor_privilege is None:
+        return False
+
+    if editor_division_id == target_division_id:
+        return editor_privilege.value > target_privilege.value
+
+    ceiling = config.DIVISION_EXTERNAL_GRANT_CEILING.get(editor_division_id)
+    if ceiling is None:
+        return False
+
+    return target_privilege.value <= ceiling.value
+
+
+@dataclass(frozen=True, slots=True)
+class DivisionRule:
+    review_rank: int
+    promote_rank: int = constants.RankIndex.MAJOR
+    review_positions: tuple[str, ...] = ()
+    promote_positions: tuple[str, ...] = ()
+    reviewer_division_id: int | None = None
+
+    def can_review(self, user: User) -> bool:
+        if (user.rank or 0) >= self.review_rank:
+            return True
+        if user.position and self.review_positions:
+            return user.position.strip().lower() in {p.lower() for p in self.review_positions}
+        return False
+
+    def can_promote(self, user: User) -> bool:
+        if (user.rank or 0) >= self.promote_rank:
+            return True
+        if user.position and self.promote_positions:
+            return user.position.strip().lower() in {p.lower() for p in self.promote_positions}
+        return False

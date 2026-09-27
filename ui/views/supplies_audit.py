@@ -1,33 +1,31 @@
 import discord
 
-import config
+from core.exceptions import ServiceError
+from services.authorization import AuthorizationService
+from services.supplies_audit import SupplyAuditService
 import texts
 from ui.modals.supplies_audit import ClearSupplyModal, GiveSupplyModal
-from utils.user_data import get_initiator
+from utils.helpers import safe_respond
 
 
-async def give_button_callback(interaction: discord.Interaction):
-    user = await get_initiator(interaction)
-
-    if not user or (user.rank or 0) < config.RankIndex.MAJOR:
-        await interaction.response.send_message(
-            "❌ Доступно со звания Майор.", ephemeral=True
-        )
-        return
-
-    await interaction.response.send_modal(GiveSupplyModal())
+async def _open_give_modal(interaction: discord.Interaction) -> None:
+    """Проверяет права и открывает модалку выдачи склада."""
+    try:
+        user_db = await AuthorizationService.require_active_soldier(interaction)
+        SupplyAuditService.validate_officer(user_db)
+        await interaction.response.send_modal(GiveSupplyModal(user_db))
+    except ServiceError as error:
+        await safe_respond(interaction, error.message)
 
 
-async def clear_button_callback(interaction: discord.Interaction):
-    user = await get_initiator(interaction)
-
-    if not user or (user.rank or 0) < config.RankIndex.MAJOR:
-        await interaction.response.send_message(
-            "❌ Доступно со звания Майор.", ephemeral=True
-        )
-        return
-
-    await interaction.response.send_modal(ClearSupplyModal())
+async def _open_clear_modal(interaction: discord.Interaction) -> None:
+    """Проверяет права и открывает модалку чистки склада."""
+    try:
+        user_db = await AuthorizationService.require_active_soldier(interaction)
+        SupplyAuditService.validate_officer(user_db)
+        await interaction.response.send_modal(ClearSupplyModal(user_db))
+    except ServiceError as error:
+        await safe_respond(interaction, error.message)
 
 
 class SupplyAuditView(discord.ui.LayoutView):
@@ -36,7 +34,6 @@ class SupplyAuditView(discord.ui.LayoutView):
 
     container = discord.ui.Container()
     container.add_item(discord.ui.TextDisplay(texts.supply_audit_title))
-
     container.add_item(
         discord.ui.Separator(visible=True, spacing=discord.SeparatorSpacing.large)
     )
@@ -47,7 +44,7 @@ class SupplyAuditView(discord.ui.LayoutView):
         style=discord.ButtonStyle.gray,
         custom_id="supply_audit_give",
     )
-    give_button.callback = give_button_callback
+    give_button.callback = _open_give_modal
 
     clear_button = discord.ui.Button(
         label="Очистка склада",
@@ -55,7 +52,7 @@ class SupplyAuditView(discord.ui.LayoutView):
         style=discord.ButtonStyle.gray,
         custom_id="supply_audit_clear",
     )
-    clear_button.callback = clear_button_callback
+    clear_button.callback = _open_clear_modal
 
     action_row = discord.ui.ActionRow()
     action_row.add_item(give_button)

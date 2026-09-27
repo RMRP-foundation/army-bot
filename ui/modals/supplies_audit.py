@@ -1,8 +1,11 @@
-import discord.ui
+import discord
 from discord import Interaction
-from discord._types import ClientT
 
-import config
+from core.exceptions import ServiceError
+from database.models import User
+from services.authorization import AuthorizationService
+from services.supplies_audit import SupplyAuditService
+from utils.helpers import safe_respond, random_loading_message
 
 
 class GiveSupplyModal(discord.ui.Modal, title="Выдача снабжения"):
@@ -27,37 +30,43 @@ class GiveSupplyModal(discord.ui.Modal, title="Выдача снабжения")
     reason = discord.ui.TextInput(
         label="Причина выдачи",
         placeholder="Укажите причину выдачи снабжения",
+        required=False,
     )
 
-    async def on_submit(self, interaction: Interaction[ClientT], /) -> None:
-        selected_user = self.to_whom.component.values[0]
-        items_list = self.items.value.splitlines()
-        reason_text = self.reason.value if self.reason.value else "Не указана"
+    def __init__(self, user_db: User):
+        super().__init__()
+        self.user_db = user_db
 
-        confirmation_message = "✅ Снабжение выдается пользователю..."
-        await interaction.response.send_message(confirmation_message, ephemeral=True)
+    async def interaction_check(self, interaction: Interaction, /) -> bool:
+        try:
+            self.user_db = await AuthorizationService.require_active_soldier(interaction)
+            SupplyAuditService.validate_officer(self.user_db)
+            return True
+        except ServiceError as error:
+            await safe_respond(interaction, error.message)
+            return False
 
-        embed = discord.Embed(
-            title="📦 Выдача снабжения",
-            color=discord.Color.dark_green(),
-            timestamp=interaction.created_at,
-        )
-        embed.add_field(name="Выдал", value=interaction.user.mention, inline=True)
-        embed.add_field(name="Получил", value=selected_user.mention, inline=True)
-        embed.add_field(
-            name="Предметы",
-            value="\n".join(f"- {item}" for item in items_list),
-            inline=False,
-        )
-        embed.add_field(name="Причина", value=reason_text, inline=False)
-        await interaction.channel.send(embed=embed)
+    async def on_submit(self, interaction: Interaction, /) -> None:
+        try:
+            await safe_respond(interaction, random_loading_message())
 
-        from cogs.supplies_audit import update_bottom_message
+            selected_user = self.to_whom.component.values[0]
 
-        await update_bottom_message(interaction.client)
+            await SupplyAuditService.submit_give_supply(
+                interaction=interaction,
+                user_db=self.user_db,
+                recipient_id=selected_user.id,
+                items_raw=self.items.value,
+                reason=self.reason.value,
+            )
+
+            await safe_respond(interaction, "✅ Снабжение успешно выдано.")
+
+        except ServiceError as error:
+            await safe_respond(interaction, error.message)
 
 
-class ClearSupplyModal(discord.ui.Modal, title="Выдача снабжения"):
+class ClearSupplyModal(discord.ui.Modal, title="Чистка склада"):
     job = discord.ui.TextInput(
         label="Действие",
         placeholder="Перечислите выполненные на складе действия",
@@ -67,29 +76,30 @@ class ClearSupplyModal(discord.ui.Modal, title="Выдача снабжения"
         required=True,
     )
 
-    async def on_submit(self, interaction: Interaction[ClientT], /) -> None:
-        job_list = self.job.value.splitlines()
+    def __init__(self, user_db: User):
+        super().__init__()
+        self.user_db = user_db
 
-        confirmation_message = "✅ Запись отправляется..."
-        await interaction.response.send_message(confirmation_message, ephemeral=True)
+    async def interaction_check(self, interaction: Interaction, /) -> bool:
+        try:
+            self.user_db = await AuthorizationService.require_active_soldier(interaction)
+            SupplyAuditService.validate_officer(self.user_db)
+            return True
+        except ServiceError as error:
+            await safe_respond(interaction, error.message)
+            return False
 
-        embed = discord.Embed(
-            title="🧹 Чистка склада",
-            color=discord.Color.gold(),
-            timestamp=interaction.created_at,
-        )
-        embed.add_field(
-            name="Ответственный", value=interaction.user.mention, inline=True
-        )
-        embed.add_field(
-            name="Предметы",
-            value="\n".join(f"- {item}" for item in job_list),
-            inline=False,
-        )
+    async def on_submit(self, interaction: Interaction, /) -> None:
+        try:
+            await safe_respond(interaction, random_loading_message())
 
-        mentions = "-# " + " ".join(f"<@&{m}>" for m in config.SUPPLIES_AUDIT_MENTIONS)
-        await interaction.channel.send(content=mentions, embed=embed)
+            await SupplyAuditService.submit_clear_supply(
+                interaction=interaction,
+                user_db=self.user_db,
+                job_raw=self.job.value,
+            )
 
-        from cogs.supplies_audit import update_bottom_message
+            await safe_respond(interaction, "✅ Запись успешно отправлена.")
 
-        await update_bottom_message(interaction.client)
+        except ServiceError as error:
+            await safe_respond(interaction, error.message)

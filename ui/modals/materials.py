@@ -1,47 +1,51 @@
 import discord
-import config
-from database.models import MaterialsReport, User
-from ui.modals.labels import name_component
-from utils.user_data import get_initiator
+
+from core.exceptions import ServiceError
+from database.models import User
+from services.authorization import AuthorizationService
+from services.materials import MaterialsService
+from utils.helpers import safe_respond
 
 
 class MaterialsReportModal(discord.ui.Modal, title="Отчет о продаже материалов"):
-    name = name_component()
-    quantity = discord.ui.TextInput(label="Количество материалов", placeholder="Например: 200.000", max_length=15)
-    evidence = discord.ui.TextInput(label="Доказательства", placeholder="Ссылка на доказательства",
-                                    style=discord.TextStyle.paragraph, max_length=500)
+    quantity = discord.ui.TextInput(
+        label="Количество материалов",
+        placeholder="Например: 200.000",
+        max_length=15,
+    )
+    evidence = discord.ui.TextInput(
+        label="Доказательства",
+        placeholder="Ссылка на доказательства",
+        style=discord.TextStyle.paragraph,
+        max_length=500,
+    )
 
     def __init__(self, user_db: User):
         super().__init__()
         self.user_db = user_db
-        self.name.default = user_db.full_name
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        try:
+            self.user_db = await AuthorizationService.require_active_soldier(interaction)
+            return True
+        except ServiceError as error:
+            await safe_respond(interaction, error.message)
+            return False
 
     async def on_submit(self, interaction: discord.Interaction):
         clean_quantity = "".join(c for c in self.quantity.value if c.isdigit())
 
         if not clean_quantity or int(clean_quantity) <= 0:
-            return await interaction.response.send_message(
-                "❌ Введите корректное количество материалов.",
-                ephemeral=True
+            await safe_respond(interaction, "❌ Введите корректное количество материалов.")
+            return
+
+        try:
+            await safe_respond(interaction, "✅ Отчет отправляется...")
+            await MaterialsService.submit_materials(
+                interaction=interaction,
+                user_db=self.user_db,
+                quantity=int(clean_quantity),
+                evidence=self.evidence.value.strip(),
             )
-
-        report = MaterialsReport(
-            user_id=interaction.user.id,
-            full_name=self.name.value,
-            quantity=int(clean_quantity),
-            evidence=self.evidence.value
-        )
-        await report.create()
-
-        channel = interaction.client.get_channel(config.CHANNELS["materials"])
-
-        role_mentions = [f"<@&{rid}>" for rid in config.MATERIALS_MENTIONS]
-        content = f"-# ||{interaction.user.mention} {' '.join(role_mentions)}||"
-
-        embed = await report.to_embed(self.user_db)
-        await channel.send(content=content, embed=embed)
-
-        await interaction.response.send_message("✅ Отчет успешно отправлен.", ephemeral=True)
-
-        from cogs.materials import update_bottom_message
-        await update_bottom_message(interaction.client)
+        except ServiceError as error:
+            await safe_respond(interaction, error.message)
