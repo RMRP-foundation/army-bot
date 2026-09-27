@@ -11,6 +11,10 @@ class RequestStatus(str, Enum):
     PENDING = "pending"
     APPROVED = "approved"
     REJECTED = "rejected"
+    ANNULLED = "annulled"
+    EXPIRED = "expired"
+    PROMOTED = "promoted"
+    ATTESTATION = "attestation"
     # Специфичные статусы для переводов
     OLD_DIVISION_REVIEW = "old_division_review"
     NEW_DIVISION_REVIEW = "new_division_review"
@@ -31,6 +35,11 @@ STATUS_DISPLAY: dict[RequestStatus, StatusDisplay] = {
     RequestStatus.PENDING: StatusDisplay("⏳", "На рассмотрении", discord.Color.gold()),
     RequestStatus.APPROVED: StatusDisplay("✅", "Одобрено", discord.Color.green()),
     RequestStatus.REJECTED: StatusDisplay("❌", "Отклонено", discord.Color.red()),
+    RequestStatus.ANNULLED: StatusDisplay("🚫", "Аннулировано", discord.Color.dark_grey()),
+    RequestStatus.EXPIRED: StatusDisplay("🕐", "Истекло" , discord.Color.dark_grey()),
+    RequestStatus.PROMOTED: StatusDisplay("⭐", "Повышен", discord.Color.dark_green()),
+    RequestStatus.ATTESTATION: StatusDisplay("⏳","На переаттестации", discord.Colour.blue()),
+
     RequestStatus.OLD_DIVISION_REVIEW: StatusDisplay(
         "🔵", "На рассмотрении", discord.Color.blue()
     ),

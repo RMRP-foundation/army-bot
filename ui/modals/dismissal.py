@@ -1,96 +1,46 @@
 import discord
+from discord import Interaction
 
-from config import nickname_regex
-from database import divisions
-from database.counters import get_next_id
-from database.models import DismissalRequest, DismissalType, User
-from ui.modals.labels import name_component
+from core.exceptions import ServiceError
+from database.models import DismissalType
+from services.authorization import AuthorizationService
+from services.dismissal import DismissalService
+from ui.modals.labels import name_input
+from utils.helpers import safe_respond
+from utils.user_data import clean_name
 
 
 class DismissalModal(discord.ui.Modal):
-    name = name_component()
+    name = name_input()
 
     def __init__(self, dismissal_type: DismissalType, default_name: str = ""):
         super().__init__(title=f"Увольнение: {dismissal_type.value}")
         self.dismissal_type = dismissal_type
         self.name.default = default_name
+        self.user_db = None
+
+    async def interaction_check(self, interaction: Interaction, /) -> bool:
+        try:
+            self.user_db = await AuthorizationService.require_active_soldier(interaction)
+            return True
+
+        except ServiceError as error:
+            await safe_respond(interaction, error.message)
+            return False
 
     async def on_submit(self, interaction: discord.Interaction):
-        user_db = await User.find_one(User.discord_id == interaction.user.id)
-        if not user_db or user_db.rank is None:
-            await interaction.response.send_message(
-                "❌ Вы не числитесь в составе фракции.", ephemeral=True
-            )
-            return
-
-        static_int = user_db.static
-        if not static_int:
-            await interaction.response.send_message(
-                "❌ Некорректный статик.", ephemeral=True
-            )
-            return
-
-        if not nickname_regex.match(self.name.value):
-            await interaction.response.send_message(
-                "### Вы ввели некорректное имя и фамилию. "
-                "Правильный формат: Иван Иванов.",
-                ephemeral=True,
-            )
-            return
-
-        existing = await DismissalRequest.find_one(
-            DismissalRequest.user_id == interaction.user.id,
-            DismissalRequest.status == "PENDING",
-        )
-        if existing:
-            await interaction.response.send_message(
-                f"❌ У вас уже есть активный рапорт #{existing.id}.", ephemeral=True
-            )
-            return
-
-        new_id = await get_next_id("dismissal_requests")
-
-        request = DismissalRequest(
-            id=new_id,
-            user_id=interaction.user.id,
-            type=self.dismissal_type,
-            full_name=self.name.value,
-            static=static_int,
-            rank_index=user_db.rank,
-            division_id=user_db.division,
-            position=user_db.position,
-        )
-        await request.create()
-
-        await interaction.response.send_message("✅ Рапорт подается...", ephemeral=True)
-
         from ui.views.dismissal import DismissalManagementView
 
-        embed = await request.to_embed(interaction.client)
-        user_division = divisions.get_division(user_db.division)
-        if user_division and user_division.positions:
-            division = user_division
-        else:
-            division = divisions.get_division_by_abbreviation("ВК")
-        positions = division.positions if division else []
-        mentions = [
-            f"<@&{pos.role_id}>"
-            for pos in positions
-            if pos.privilege.value >= 2 and pos.role_id
-        ]
         try:
-            await interaction.channel.send(
-                content=f"||<@{interaction.user.id}>{''.join(mentions)}||",
-                embed=embed,
-                view=DismissalManagementView(request.id),
-            )
-        except Exception:
-            await request.delete()
-            await interaction.edit_original_response(
-                content="❌ Не удалось отправить рапорт в канал. Попробуйте ещё раз."
-            )
-            return
+            await safe_respond(interaction, "✅ Рапорт подается...")
 
-        from cogs.dismissal import update_bottom_message
+            await DismissalService.submit_dismissal(
+                bot=interaction.client,
+                user=self.user_db,
+                full_name=clean_name(self.name.value),
+                dismissal_type=self.dismissal_type,
+                view_factory=DismissalManagementView
+            )
 
-        await update_bottom_message(interaction.client)
+        except ServiceError as error:
+            await safe_respond(interaction, error.message)

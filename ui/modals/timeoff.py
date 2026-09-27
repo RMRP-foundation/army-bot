@@ -1,74 +1,44 @@
-import discord.ui
+import discord
+from discord import Interaction
 
-import config
-from config import nickname_regex
-from database import divisions
-from database.counters import get_next_id
-from database.models import (
-    RoleData,
-    User,
-    TimeoffRequest,
-)
-from ui.modals.labels import (
-    name_component,
-    period_label,
-)
-from ui.views.timeoff import TimeoffManagementButton, TimeoffCancelButton
+from core.exceptions import ServiceError
+from database.models import User
+from services.authorization import AuthorizationService
+from services.timeoff import TimeoffService
+from ui.modals.labels import period_input
+from utils.helpers import safe_respond
 
 
 class TimeoffRequestModal(discord.ui.Modal, title="Заявление на отгул"):
-    name = name_component()
-    period = period_label()
+    period = period_input()
 
-    def __init__(self, user_name: str | None):
+    def __init__(self, user_db: User):
         super().__init__()
-        self.name.default = user_name
+        self.user_db = user_db
+
+    async def interaction_check(self, interaction: Interaction, /) -> bool:
+        try:
+            self.user_db = await AuthorizationService.require_active_soldier(interaction)
+            await TimeoffService.validate_can_apply(self.user_db)
+            return True
+        except ServiceError as error:
+            await safe_respond(interaction, error.message)
+            return False
 
     async def on_submit(self, interaction: discord.Interaction):
-        if not nickname_regex.match(self.name.value):
-            await interaction.response.send_message(
-                "### Вы ввели некорректное имя и фамилию. "
-                "Правильный формат: Иван Иванов.",
-                ephemeral=True,
+        from ui.views.timeoff import TimeoffManagementView
+
+        try:
+            await safe_respond(interaction, "⏳ Заявление отправляется...", ephemeral=True)
+
+            await TimeoffService.submit_timeoff(
+                interaction=interaction,
+                user_db=self.user_db,
+                period=self.period.value.strip(),
+                view_factory=TimeoffManagementView,
             )
-            return
 
-        await interaction.response.send_message(
-            "### Заявление отправлено на рассмотрение.", ephemeral=True
-        )
+            await safe_respond(interaction, "### Заявление отправлено на рассмотрение.", ephemeral=True)
 
-        requester = await User.find_one(User.discord_id == interaction.user.id)
-        static_id = requester.static
-        request = TimeoffRequest(
-            id=await get_next_id("timeoff_requests"),
-            user_id=interaction.user.id,
-            data=RoleData(full_name=self.name.value, static_id=static_id),
-            period=self.period.value
-        )
-        await request.create()
-
-        view = discord.ui.View(timeout=None)
-        view.add_item(TimeoffManagementButton("approve", request.id))
-        view.add_item(TimeoffManagementButton("reject", request.id))
-        view.add_item(TimeoffCancelButton(request_id=request.id))
-
-        division = divisions.get_division(requester.division)
-        if not division or not division.positions:
-            division = divisions.get_division_by_abbreviation("ВК")
-
-        positions = division.positions if (division and division.positions) else []
-        mentions = [
-            f"<@&{pos.role_id}>"
-            for pos in positions
-            if pos.privilege.value >= 2 and pos.role_id
-        ]
-
-        await interaction.channel.send(
-            content=f"-# ||<@{interaction.user.id}> {' '.join(mentions)}||",
-            embed=await request.to_embed(),
-            view=view,
-        )
-
-        from cogs.timeoff import update_bottom_message
-
-        await update_bottom_message(interaction.client)
+        except ServiceError as error:
+            await safe_respond(interaction, error.message)

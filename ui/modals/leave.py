@@ -2,13 +2,13 @@ import datetime
 
 import dateparser
 import discord
+from discord import Interaction
 
-from config import OOC_MIN_DAYS, OOC_MAX_DAYS, IC_MAX_DAYS
-from database.counters import get_next_id
-from database.models import LeaveRequest, LeaveType
-from utils.user_data import get_initiator
-
-MSK = datetime.timezone(datetime.timedelta(hours=3))
+from core.exceptions import ServiceError
+from database.models import LeaveType
+from services.authorization import AuthorizationService
+from services.leave import LeaveService
+from utils.helpers import safe_respond
 
 DATEPARSER_SETTINGS = {
     "RETURN_AS_TIMEZONE_AWARE": True,
@@ -26,9 +26,10 @@ def parse_date(raw: str) -> datetime.date | None:
         raw,
         languages=["ru", "en"],
         date_formats=["%d.%m", "%d.%m.%Y", "%d/%m/%Y", "%d-%m-%Y"],
-        settings=DATEPARSER_SETTINGS
+        settings=DATEPARSER_SETTINGS,
     )
     return result.date() if result else None
+
 
 class LeaveRequestModal(discord.ui.Modal):
     def __init__(self, leave_type: LeaveType):
@@ -54,91 +55,41 @@ class LeaveRequestModal(discord.ui.Modal):
             max_length=500,
             required=True,
         )
+        self.user_db = None
         self.add_item(self.start_input)
         self.add_item(self.end_input)
         self.add_item(self.reason_input)
 
+    async def interaction_check(self, interaction: Interaction, /) -> bool:
+        try:
+            self.user_db = await AuthorizationService.require_active_soldier(interaction)
+            return True
+        except ServiceError as error:
+            await safe_respond(interaction, error.message)
+            return False
 
     async def on_submit(self, interaction: discord.Interaction):
-        user_db = await get_initiator(interaction)
-
         start_date = parse_date(self.start_input.value)
         end_date = parse_date(self.end_input.value)
 
         if not start_date or not end_date:
-            await interaction.response.send_message(
-                "❌ Не удалось распознать даты. Попробуйте формат: `20.05.2026`.",
-                ephemeral=True,
-            )
+            await safe_respond(interaction, "❌ Не удалось распознать даты. Попробуйте формат: `20.05.2026`.")
             return
-
-        today = (discord.utils.utcnow() + datetime.timedelta(hours=3)).date()
-        if start_date < today:
-            await interaction.response.send_message(
-                "❌ Дата начала не может быть в прошлом.", ephemeral=True
-            )
-            return
-
-        if end_date <= start_date:
-            await interaction.response.send_message(
-                "❌ Дата выхода должна быть позже даты начала.", ephemeral=True
-            )
-            return
-
-        days = (end_date - start_date).days
-
-        if self.leave_type == LeaveType.IC:
-            if not (1 <= days <= IC_MAX_DAYS):
-                await interaction.response.send_message(
-                    f"❌ IC отпуск можно взять на 1–{IC_MAX_DAYS} дней (у вас {days} дн.).",
-                    ephemeral=True,
-                )
-                return
-        else:
-            if not (OOC_MIN_DAYS <= days <= OOC_MAX_DAYS):
-                await interaction.response.send_message(
-                    f"❌ OOC отпуск можно взять на {OOC_MIN_DAYS}–{OOC_MAX_DAYS} дней (у вас {days} дн.).",
-                    ephemeral=True,
-                )
-                return
-
-        await interaction.response.send_message(
-            "✅ Заявление подаётся...", ephemeral=True
-        )
-
-        start_dt = datetime.datetime.combine(start_date, datetime.time.min, tzinfo=MSK)
-        end_dt = datetime.datetime.combine(end_date, datetime.time.min, tzinfo=MSK)
-
-        new_id = await get_next_id("leave_requests")
-        request = LeaveRequest(
-            id=new_id,
-            user_id=interaction.user.id,
-            leave_type=self.leave_type,
-            reason=self.reason_input.value.strip(),
-            starts_at=start_dt.astimezone(datetime.timezone.utc),
-            ends_at=end_dt.astimezone(datetime.timezone.utc)
-        )
-        await request.create()
-
-        from database import divisions
-
-        div = divisions.get_division(user_db.division)
-        if not div or not div.positions:
-            div = divisions.get_division_by_abbreviation("ВК")
-
-        mentions = [f"<@{interaction.user.id}>"]
-        mentions += [f"<@&{pos.role_id}>" for pos in div.positions if pos.privilege.value >= 2 and pos.role_id]
 
         from ui.views.leave import LeaveManagementView
 
-        embed = await request.to_embed()
-        msg = await interaction.channel.send(
-            content=f"||{' '.join(mentions)}||",
-            embed=embed,
-            view=LeaveManagementView(new_id, status="PENDING"),
-        )
-        request.message_id = msg.id
-        await request.save()
+        try:
+            await safe_respond(interaction, "✅ Рапорт подается...")
 
-        from cogs.leave import update_bottom_message
-        await update_bottom_message(interaction.client, self.leave_type)
+            await LeaveService.submit_leave(
+                interaction=interaction,
+                user_db=self.user_db,
+                leave_type=self.leave_type,
+                start_date=start_date,
+                end_date=end_date,
+                reason=self.reason_input.value.strip(),
+                view_factory=LeaveManagementView,
+            )
+
+        except ServiceError as error:
+            await safe_respond(interaction, error.message)

@@ -12,10 +12,11 @@ from .promotion import (
 )
 from .materials import MaterialsReportView
 from .reinstatement import (
-    ApproveReinstatementButton,
+    LegacyApproveReinstatementButton,
+    LegacyRejectReinstatementButton,
     ReinstatementApplyView,
+    ReinstatementManagementButton,
     ReinstatementRankSelect,
-    RejectReinstatementButton,
 )
 from .role_getting import RoleApplyView, RoleManagementButton
 from .sso_patrol import SSOPatrolApplyView, SSOPatrolManagementButton
@@ -23,13 +24,11 @@ from .supplies import SupplyCreateView, SupplyManageButton
 from .supplies_audit import SupplyAuditView
 from .timeoff import TimeoffApplyView, TimeoffCancelButton, TimeoffManagementButton
 from .transfers import (
-    ApproveTransferButton,
-    OldApproveButton,
+    ApproveNewDivisionButton,
+    ApproveOldDivisionButton,
     RejectTransferButton,
-    TransferApply,
-)
-from .transfers import (
-    TransferView as TransferView,
+    TransferApplyButton,
+    CancelTransferButton,
 )
 
 
@@ -50,17 +49,17 @@ def load_persistent_views(bot):
 
 def load_buttons(bot):
     bot.add_dynamic_items(
-        ApproveReinstatementButton,
+        ReinstatementManagementButton,
         ReinstatementRankSelect,
-        RejectReinstatementButton,
         RoleManagementButton,
         SupplyManageButton,
         DismissalManagementButton,
         DismissalCancelButton,
-        TransferApply,
-        ApproveTransferButton,
+        TransferApplyButton,
+        ApproveNewDivisionButton,
+        ApproveOldDivisionButton,
         RejectTransferButton,
-        OldApproveButton,
+        CancelTransferButton,
         TimeoffManagementButton,
         TimeoffCancelButton,
         SSOPatrolManagementButton,
@@ -68,5 +67,7 @@ def load_buttons(bot):
         LeaveManagementButton,
         PromotionManagementButton,
         PromoteButton,
+        LegacyApproveReinstatementButton,  # Временная
+        LegacyRejectReinstatementButton,  # Временная
     )
     load_persistent_views(bot)

@@ -3,7 +3,7 @@ import logging
 from beanie import init_beanie
 from pymongo import AsyncMongoClient
 
-import config
+from core import config
 from database.counters import Counter
 from database.models import (
     BottomMessage,
@@ -45,7 +45,7 @@ async def establish_db_connection():
     if _IS_INITIALIZED:
         return
 
-    client = AsyncMongoClient(config.MONGO_URI)
+    client = AsyncMongoClient(config.MONGO_URI, tz_aware=True)
 
     await init_beanie(
         database=client.get_database(config.MONGO_DB_NAME), document_models=MODELS

@@ -1,20 +1,20 @@
 import asyncio
-import datetime
 import logging
 
 import discord
 from discord.ext import commands
 
-import config
 from bot import Bot
+from core import config
 from database.models import LeaveRequest, LeaveType, User
-from ui.views.leave import (
-    ICLeaveApplyView,
-    OOCLeaveApplyView,
-    _remove_leave_nick_and_role,
-)
+from services.member import MemberService
+from services.notifications import notify_leave_expired
+from ui.embeds.leave import leave_embed
+from ui.views.leave import ICLeaveApplyView, OOCLeaveApplyView
 from utils.bottom_message import update_bottom_message as _update_bottom_message
-from utils.notifications import notify_leave_expired
+from utils.helpers import safe_edit_message, build_mentions
+from utils.mongo_atomic import atomic_status_transition
+from utils.permissions import is_service
 
 logger = logging.getLogger(__name__)
 
@@ -33,9 +33,9 @@ async def _activate_leave(bot: Bot, request_id: int):
         return
 
     member = await bot.getch_member(request.user_id)
-    user_db = await User.find_one(User.discord_id == request.user_id)
+    user_db = await User.get_by_discord_id(request.user_id)
 
-    if member and user_db:
+    if member and user_db and user_db.rank is not None:
         if user_db.leave_status == request.leave_type.value:
             return
 
@@ -46,16 +46,17 @@ async def _activate_leave(bot: Bot, request_id: int):
             request.original_nick = member.display_name
             await request.save()
 
-        from ui.views.leave import apply_leave_nick_and_role
-        await apply_leave_nick_and_role(bot, member, user_db, request.leave_type)
+        await MemberService.sync_member_discord(
+            member=member,
+            user_db=user_db,
+            reason=f"{request.leave_type.value} отпуск активирован",
+        )
 
 
 async def schedule_leave_activation(bot: Bot, request: LeaveRequest):
     """Планирует выдачу роли в будущем."""
     now = discord.utils.utcnow()
-    # starts_at в БД уже в UTC
-    start_time = request.starts_at.replace(tzinfo=datetime.timezone.utc)
-    delay = (start_time - now).total_seconds()
+    delay = (request.starts_at - now).total_seconds()
 
     if delay <= 0:
         await _activate_leave(bot, request.id)
@@ -72,7 +73,7 @@ async def schedule_leave_activation(bot: Bot, request: LeaveRequest):
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            logger.error(f"Ошибка в таймере активации отпуска #{request.id}: {e}")
+            logger.error(f"Error in leave activation timer #{request.id}: {e}")
         finally:
             _leave_activation_timers.pop(request.id, None)
 
@@ -82,39 +83,38 @@ async def schedule_leave_activation(bot: Bot, request: LeaveRequest):
 
 async def _expire_leave(bot: Bot, request_id: int):
     """Завершает отпуск по истечении срока."""
-    request = await LeaveRequest.find_one(LeaveRequest.id == request_id)
-    if not request or request.status != "APPROVED":
+    updated_dict = await atomic_status_transition(
+        LeaveRequest.get_pymongo_collection(), request_id, "APPROVED", "EXPIRED",
+    )
+    if not updated_dict:
         return
 
-    request.status = "EXPIRED"
-    await request.save()
+    request = LeaveRequest(**updated_dict)
 
     member = await bot.getch_member(request.user_id)
-    if member:
-        user_db = await User.find_one(User.discord_id == request.user_id)
-        if user_db:
-            user_db.leave_status = None
-            await user_db.save()
+    user_db = await User.get_by_discord_id(request.user_id)
+    if user_db:
+        user_db.leave_status = None
+        await user_db.save()
 
-            await _remove_leave_nick_and_role(
-                bot, member, user_db, request.leave_type,
-                original_nick=request.original_nick,
-            )
+    if member and user_db:
+        await MemberService.sync_member_discord(
+            member=member,
+            user_db=user_db,
+            reason=f"{request.leave_type.value} отпуск завершён",
+            original_nick=request.original_nick,
+        )
 
     channel_key = "ic_leave" if request.leave_type == LeaveType.IC else "ooc_leave"
     channel = bot.get_channel(config.CHANNELS[channel_key])
 
     if channel and request.message_id:
-        try:
-            msg = await channel.fetch_message(request.message_id)
-            embed = await request.to_embed()
-            await msg.edit(
-                content=f"-# ||<@{request.user_id}>||",
-                embed=embed,
-                view=None,
-            )
-        except (discord.NotFound, discord.HTTPException) as e:
-            logger.warning(f"Не удалось обновить сообщение отпуска #{request_id}: {e}")
+        await safe_edit_message(
+            channel.get_partial_message(request.message_id),
+            embed=leave_embed(request, user_db),
+            content=build_mentions(request.user_id),
+            view=None,
+        )
 
     await notify_leave_expired(bot, request.user_id, request)
     _leave_timers.pop(request_id, None)
@@ -123,7 +123,7 @@ async def _expire_leave(bot: Bot, request_id: int):
 async def schedule_leave_expiry(bot: Bot, request: LeaveRequest):
     """Планирует задачу завершения отпуска через оставшееся время."""
     now = discord.utils.utcnow()
-    delay = (request.ends_at.replace(tzinfo=datetime.timezone.utc) - now).total_seconds()
+    delay = (request.ends_at - now).total_seconds()
 
     if delay <= 0:
         await _expire_leave(bot, request.id)
@@ -138,19 +138,27 @@ async def schedule_leave_expiry(bot: Bot, request: LeaveRequest):
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            logger.error(f"Ошибка в таймере отпуска #{request.id}: {e}")
+            logger.error(f"Error in leave expiry timer #{request.id}: {e}")
 
     task = asyncio.create_task(_run())
     _leave_timers[request.id] = task
 
+    def _cleanup(completed: asyncio.Task) -> None:
+        if _leave_timers.get(request.id) is completed:
+            _leave_timers.pop(request.id, None)
+
+    task.add_done_callback(_cleanup)
+
 
 def cancel_leave_timer(request_id: int):
-    """Отменяет таймеры активации и завершения отпуска."""
+    """Отменяет таймер завершения отпуска."""
     task = _leave_timers.pop(request_id, None)
     if task and not task.done():
         task.cancel()
 
+
 def cancel_activation_timer(request_id: int):
+    """Отменяет таймер активации отпуска."""
     task = _leave_activation_timers.pop(request_id, None)
     if task and not task.done():
         task.cancel()
@@ -170,17 +178,13 @@ async def restore_leave_timers(bot: Bot):
         ends_at = getattr(req, "ends_at", None)
         if starts_at is None or ends_at is None:
             logger.warning(
-                f"Пропускаем восстановление таймера отпуска #{req.id}: "
-                f"отсутствует starts_at/ends_at (старая запись)."
+                f"Skipping leave timer restoration #{req.id}: missing starts_at/ends_at (legacy record)."
             )
             continue
 
-        start_t = starts_at.replace(tzinfo=datetime.timezone.utc)
-        end_t = ends_at.replace(tzinfo=datetime.timezone.utc)
-
-        if now >= end_t:
+        if now >= ends_at:
             await _expire_leave(bot, req.id)
-        elif now >= start_t:
+        elif now >= starts_at:
             await _activate_leave(bot, req.id)
             await schedule_leave_expiry(bot, req)
         else:
@@ -203,8 +207,8 @@ class Leave(commands.Cog):
         self.bot = bot
 
     @commands.command(name="refresh_leave")
-    @commands.is_owner()
-    async def refresh_leave(self, ctx: commands.Context):
+    @is_service()
+    async def update_command(self, ctx: commands.Context):
         if ctx.channel.id == ic_channel_id:
             await update_bottom_message(self.bot, LeaveType.IC)
         elif ctx.channel.id == ooc_channel_id:

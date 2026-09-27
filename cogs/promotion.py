@@ -4,6 +4,7 @@ from bot import Bot
 from database import divisions
 from ui.views.promotion import PromotionApplyView
 from utils.bottom_message import update_bottom_message as _update_bottom_message
+from utils.permissions import is_service
 
 
 async def update_bottom_message(bot: Bot, channel_id: int):
@@ -21,7 +22,7 @@ class Promotion(commands.Cog):
         self.bot = bot
 
     @commands.command(name="refresh_promotion")
-    @commands.is_owner()
+    @is_service()
     async def update_command(self, ctx: commands.Context):
         await update_bottom_message(self.bot, ctx.channel.id)
 

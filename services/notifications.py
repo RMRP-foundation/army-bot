@@ -1,9 +1,8 @@
 import logging
-from typing import Optional
 
 import discord
 
-from utils.audit import AuditAction, action_emojis
+from services.audit import AuditAction, action_emojis
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +33,31 @@ async def notify_role_approved(bot, user_id: int, role_type: str) -> bool:
     embed.set_footer(text="Добро пожаловать!")
     return await _send_dm(bot, user_id, embed)
 
+async def notify_role_rejected(
+    bot, user_id: int, role_type: str, reason: str | None = None
+) -> bool:
+    """Уведомление об отклонении заявки на роль."""
+    description = f"Ваша заявка на роль **{role_type}** была отклонена."
+    if reason:
+        description += f"\n\n**Причина:** {reason}"
+
+    embed = discord.Embed(
+        title=f"{action_emojis[AuditAction.DISMISSED]} Заявка отклонена",
+        description=description,
+        color=discord.Color.red(),
+    )
+    return await _send_dm(bot, user_id, embed)
+
+async def notify_reinstatement_attestation(bot, user_id: int) -> bool:
+    """Уведомление о переводе заявления на этап переаттестации."""
+    embed = discord.Embed(
+        title="📋 Восстановление рассмотрено",
+        description="Ваше заявление на восстановление было рассмотрено.\n"
+        "Для определения итогового звания необходимо пройти переаттестацию.",
+        color=discord.Color.blurple(),
+    )
+    return await _send_dm(bot, user_id, embed)
+
 
 async def notify_reinstatement_approved(bot, user_id: int, rank: str) -> bool:
     """Уведомление об одобрении восстановления."""
@@ -44,6 +68,22 @@ async def notify_reinstatement_approved(bot, user_id: int, rank: str) -> bool:
         color=discord.Color.green(),
     )
     embed.set_footer(text="С возвращением!")
+    return await _send_dm(bot, user_id, embed)
+
+
+async def notify_reinstatement_rejected(
+    bot, user_id: int, reason: str | None = None
+) -> bool:
+    """Уведомление об отклонении восстановления."""
+    description = "Ваше заявление на восстановление было отклонено."
+    if reason:
+        description += f"\n\n**Причина:** {reason}"
+
+    embed = discord.Embed(
+        title=f"{action_emojis[AuditAction.REINSTATEMENT]} Восстановление отклонено",
+        description=description,
+        color=discord.Color.red(),
+    )
     return await _send_dm(bot, user_id, embed)
 
 
@@ -59,6 +99,16 @@ async def notify_transfer_approved(bot, user_id: int, new_division: str) -> bool
     return await _send_dm(bot, user_id, embed)
 
 
+async def notify_transfer_rejected(bot, user_id: int, reason: str) -> bool:
+    """Уведомление об отклонении перевода."""
+    embed = discord.Embed(
+        title=f"{action_emojis[AuditAction.DIVISION_CHANGED]} Перевод отклонен",
+        description=f"Ваше заявление на перевод было отклонено.\n\n"
+        f"**Причина:** {reason}",
+        color=discord.Color.red(),
+    )
+    return await _send_dm(bot, user_id, embed)
+
 async def notify_promoted(bot, user_id: int, new_rank: str) -> bool:
     """Уведомление о повышении звания."""
     embed = discord.Embed(
@@ -69,28 +119,33 @@ async def notify_promoted(bot, user_id: int, new_rank: str) -> bool:
     return await _send_dm(bot, user_id, embed)
 
 
-async def notify_unblacklisted(bot, user_id: int) -> bool:
-    """Уведомление о снятии с черного списка."""
+async def notify_demoted(bot, user_id: int, new_rank: str) -> bool:
+    """Уведомление о понижении звания."""
     embed = discord.Embed(
-        title="Снятие с черного списка",
-        description="Вы были сняты с черного списка.",
-        color=discord.Color.green(),
+        title=f"{action_emojis[AuditAction.DEMOTED]} Понижение звания",
+        description=f"Вам было понижено звание до: **{new_rank}**.",
+        color=discord.Color.red(),
     )
     return await _send_dm(bot, user_id, embed)
 
 
-async def notify_role_rejected(
-    bot, user_id: int, role_type: str, reason: Optional[str] = None
-) -> bool:
-    """Уведомление об отклонении заявки на роль."""
-    description = f"Ваша заявка на роль **{role_type}** была отклонена."
-    if reason:
-        description += f"\n\n**Причина:** {reason}"
-
+async def notify_blacklisted(bot, user_id: int, reason: str, duration: str) -> bool:
+    """Уведомление о добавлении в черный список."""
     embed = discord.Embed(
-        title=f"{action_emojis[AuditAction.DISMISSED]} Заявка отклонена",
-        description=description,
+        title="⬛ Добавление в черный список",
+        description=f"Вы были добавлены в черный список.\n\n"
+        f"**Причина:** {reason}\n**Срок:** {duration}",
         color=discord.Color.red(),
+    )
+    return await _send_dm(bot, user_id, embed)
+
+
+async def notify_unblacklisted(bot, user_id: int) -> bool:
+    """Уведомление о вынесении из черного списка."""
+    embed = discord.Embed(
+        title="Вынесение из черного списка",
+        description="Вы были вынесены из черного списка.",
+        color=discord.Color.green(),
     )
     return await _send_dm(bot, user_id, embed)
 
@@ -110,54 +165,6 @@ async def notify_dismissed(
     return await _send_dm(bot, user_id, embed)
 
 
-async def notify_blacklisted(bot, user_id: int, reason: str, duration: str) -> bool:
-    """Уведомление о добавлении в черный список."""
-    embed = discord.Embed(
-        title="⬛ Добавление в черный список",
-        description=f"Вы были добавлены в черный список.\n\n"
-        f"**Причина:** {reason}\n**Срок:** {duration}",
-        color=discord.Color.red(),
-    )
-    return await _send_dm(bot, user_id, embed)
-
-
-async def notify_reinstatement_rejected(
-    bot, user_id: int, reason: Optional[str] = None
-) -> bool:
-    """Уведомление об отклонении восстановления."""
-    description = "Ваше заявление на восстановление было отклонено."
-    if reason:
-        description += f"\n\n**Причина:** {reason}"
-
-    embed = discord.Embed(
-        title=f"{action_emojis[AuditAction.REINSTATEMENT]} Восстановление отклонено",
-        description=description,
-        color=discord.Color.red(),
-    )
-    return await _send_dm(bot, user_id, embed)
-
-
-async def notify_transfer_rejected(bot, user_id: int, reason: str) -> bool:
-    """Уведомление об отклонении перевода."""
-    embed = discord.Embed(
-        title=f"{action_emojis[AuditAction.DIVISION_CHANGED]} Перевод отклонен",
-        description=f"Ваше заявление на перевод было отклонено.\n\n"
-        f"**Причина:** {reason}",
-        color=discord.Color.red(),
-    )
-    return await _send_dm(bot, user_id, embed)
-
-
-async def notify_demoted(bot, user_id: int, new_rank: str) -> bool:
-    """Уведомление о понижении звания."""
-    embed = discord.Embed(
-        title=f"{action_emojis[AuditAction.DEMOTED]} Понижение звания",
-        description=f"Вам было понижено звание до: **{new_rank}**.",
-        color=discord.Color.red(),
-    )
-    return await _send_dm(bot, user_id, embed)
-
-
 async def notify_position_changed(bot, user_id: int, new_position: str) -> bool:
     """Уведомление об изменении должности."""
     embed = discord.Embed(
@@ -171,7 +178,7 @@ async def notify_timeoff_approved(bot, user_id: int) -> bool:
     """Уведомление об одобрении заявки на отгул."""
     embed = discord.Embed(
         title=f"{action_emojis[AuditAction.INVITED]} Заявка одобрена",
-        description=f"Ваша заявка на отгул была одобрена.",
+        description="Ваша заявка на отгул была одобрена.",
         color=discord.Color.green(),
     )
     return await _send_dm(bot, user_id, embed)
@@ -181,28 +188,21 @@ async def notify_timeoff_rejected(bot, user_id: int) -> bool:
 
     embed = discord.Embed(
         title=f"{action_emojis[AuditAction.DISMISSED]} Заявка отклонена",
-        description=f"Ваша заявка на отгул была отклонена.",
+        description="Ваша заявка на отгул была отклонена.",
         color=discord.Color.red(),
     )
     return await _send_dm(bot, user_id, embed)
 
 async def notify_leave_approved(bot, user_id: int, request) -> bool:
     """Уведомление об одобрении отпуска."""
-    import datetime as _dt
-
     type_label = "IC" if request.leave_type.value == "IC" else "OOC"
 
-    def _to_utc(dt):
-        if dt is None:
-            return None
-        return dt.replace(tzinfo=_dt.timezone.utc) if dt.tzinfo is None else dt
-
     starts_at_fmt = (
-        discord.utils.format_dt(_to_utc(request.starts_at), style="d")
+        discord.utils.format_dt(request.starts_at, style="d")
         if request.starts_at else "—"
     )
     ends_at_fmt = (
-        discord.utils.format_dt(_to_utc(request.ends_at), style="d")
+        discord.utils.format_dt(request.ends_at, style="d")
         if request.ends_at else "—"
     )
 

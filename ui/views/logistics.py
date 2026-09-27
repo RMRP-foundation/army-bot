@@ -1,12 +1,12 @@
 import discord
-
 from discord.ui import Separator
 
-import config
-from database.models import LogisticsRequest, LogisticsType, User
+from core.exceptions import ServiceError
+from database.models import LogisticsType, User
+from services.logistics import LogisticsService
 from texts import logistics_description
-from ui.views.indicators import indicator_view
-from utils.permissions import is_high_command
+from ui.modals.logistics import LogisticsModal
+from utils.helpers import safe_respond, safe_edit_message, random_loading_message, build_mentions
 
 
 class LogisticsApplyView(discord.ui.LayoutView):
@@ -22,70 +22,68 @@ class LogisticsApplyView(discord.ui.LayoutView):
         types = [LogisticsType.ORBITA, LogisticsType.OBJECT7, LogisticsType.WAREHOUSE]
 
         for t in types:
-            btn = discord.ui.Button(label=t.value, custom_id=f"log_apply_{t.name}", style=discord.ButtonStyle.secondary)
-            btn.callback = self.create_callback(t)
+            btn = discord.ui.Button(
+                label=t.value,
+                custom_id=f"log_apply_{t.name}",
+                style=discord.ButtonStyle.secondary,
+            )
+            btn.callback = self._create_callback(t)
             row.add_item(btn)
 
         container.add_item(row)
         self.add_item(container)
 
-    def create_callback(self, supply_type):
+    @staticmethod
+    def _create_callback(supply_type: LogisticsType):
         async def callback(interaction: discord.Interaction):
-            user_db = await User.find_one(User.discord_id == interaction.user.id)
-            from ui.modals.logistics import LogisticsModal
-            await interaction.response.send_modal(LogisticsModal(supply_type, user_db))
+            user_db = await User.get_by_discord_id(interaction.user.id)
+            default_nick = user_db.full_name if user_db and user_db.full_name else ""
+            await interaction.response.send_modal(LogisticsModal(supply_type, default_nickname=default_nick))
 
         return callback
 
 
-class LogisticsManagementButton(discord.ui.DynamicItem[discord.ui.Button],
-                                template=r"log_mng:(?P<act>\w+):(?P<id>\d+)"):
-    status_map = {
-        "approve": ("Завершить", "👍", discord.ButtonStyle.success, "Завершил"),
-        "reject":  ("Отклонить", "👎", discord.ButtonStyle.danger,  "Отклонил")
+class LogisticsManagementButton(
+    discord.ui.DynamicItem[discord.ui.Button],
+    template=r"log_mng:(?P<act>\w+):(?P<id>\d+)",
+):
+    _config = {
+        "approve": ("Завершить", "👍", discord.ButtonStyle.success),
+        "reject": ("Отклонить", "👎", discord.ButtonStyle.danger),
     }
+
     def __init__(self, action: str, request_id: int):
-        label, emoji, style, _ = self.status_map.get(action, ("?", None, discord.ButtonStyle.secondary))
-        super().__init__(discord.ui.Button(
-            label=label,
-            emoji=emoji,
-            style=style,
-            custom_id=f"log_mng:{action}:{request_id}"
-        ))
-        self.action, self.request_id = action, request_id
+        label, emoji, style = self._config.get(action, (action, None, discord.ButtonStyle.secondary))
+        super().__init__(
+            discord.ui.Button(
+                label=label,
+                emoji=emoji,
+                style=style,
+                custom_id=f"log_mng:{action}:{request_id}",
+            )
+        )
+        self.action = action
+        self.request_id = request_id
 
     @classmethod
-    async def from_custom_id(cls, interaction, item, match):
+    async def from_custom_id(cls, interaction: discord.Interaction, item: discord.ui.Button, match):
         return cls(match.group("act"), int(match.group("id")))
 
     async def callback(self, interaction: discord.Interaction):
-        from utils.mongo_lock import try_lock
-        if not await try_lock(LogisticsRequest, self.request_id, "status", "PROCESSING", "PENDING"):
-            return await interaction.response.send_message(f"❌ Запрос #{self.request_id} уже обработан.", ephemeral=True)
-
-        is_supplier =any(r.id == config.RoleId.SUPPLIER.value for r in interaction.user.roles)
-        is_staff = await is_high_command(interaction.user.id)
-        if not is_supplier and not is_staff:
-            await LogisticsRequest.get_pymongo_collection().update_one(
-                {"_id": self.request_id}, {"$set": {"status": "PENDING"}}
+        try:
+            await safe_respond(interaction, random_loading_message())
+            result = await LogisticsService.process_logistics(
+                interaction=interaction, request_id=self.request_id, action=self.action,
             )
-            return await interaction.response.send_message(
-                "❌ У вас нет прав поставщика для этого действия.",
-                ephemeral=True
+            await safe_edit_message(
+                message=interaction.message,
+                content=build_mentions([result.request.user_id, interaction.user.id]),
+                embed=result.embed,
+                view=result.view,
             )
-
-        req = await LogisticsRequest.find_one(LogisticsRequest.id == self.request_id)
-
-        req.status = "APPROVED" if self.action == "approve" else "REJECTED"
-        req.reviewer_name = interaction.user.display_name
-        await req.save()
-
-        _, emoji, _, prefix = self.status_map[self.action]
-        await interaction.response.edit_message(
-            content=f"<@{req.user_id}> <@{interaction.user.id}>",
-            embed=await req.to_embed(),
-            view=indicator_view(f"{prefix} {req.reviewer_name}", emoji)
-        )
+            await safe_respond(interaction, result.message)
+        except ServiceError as error:
+            await safe_respond(interaction, error.message)
 
 
 class LogisticsManagementView(discord.ui.View):

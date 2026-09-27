@@ -1,46 +1,24 @@
-import logging
-import re
-from typing import Any
-
 import discord
-from discord import Interaction, InteractionResponse, SelectOption
-from discord._types import ClientT
+from discord import SelectOption
 
-import config
+from core import constants
 import texts
-from config import RANKS
-from database import divisions
-from database.models import ReinstatementRequest, User
-from ui.views.indicators import indicator_view
-from utils.audit import AuditAction, audit_logger
-from utils.notifications import (
-    notify_reinstatement_approved,
-    notify_reinstatement_rejected,
-)
-from utils.roles import to_division, to_position, to_rank
-from utils.user_data import (
-    get_full_name,
-    get_initiator,
-    update_user_name_if_changed,
-)
-
-logger = logging.getLogger(__name__)
+from core.exceptions import ServiceError
+from database.models import User, ReinstatementRequest
+from services.authorization import AuthorizationService
+from services.reinstatement import ReinstatementService
+from ui.modals.reinstatement import ReinstatementModal
+from utils.helpers import safe_respond, random_loading_message, safe_edit_message, build_mentions
 
 
-async def button_callback(interaction: discord.Interaction):
-    user = await get_initiator(interaction)
-    if not user or user.rank is None:
-        await interaction.response.send_message(
-            "### Вы не состоите на службе "
-            "и не можете подать заявление на восстановление.",
-            ephemeral=True,
-        )
-        return
-
-    from ui.modals.reinstatement import ReinstatementModal
-
-    modal = ReinstatementModal(await get_full_name(interaction))
-    await interaction.response.send_modal(modal)
+async def _open_reinstatement_modal(interaction: discord.Interaction) -> None:
+    """Проверяет возможность подачи заявления на восстановление и открывает модалку."""
+    try:
+        user_db = await AuthorizationService.require_active_soldier(interaction)
+        await ReinstatementService.validate_no_active_request(user_db.discord_id)
+        await interaction.response.send_modal(ReinstatementModal(user_db))
+    except ServiceError as error:
+        await safe_respond(interaction, error.message)
 
 
 class ReinstatementApplyView(discord.ui.LayoutView):
@@ -52,7 +30,6 @@ class ReinstatementApplyView(discord.ui.LayoutView):
     container.add_item(discord.ui.TextDisplay(texts.reinstatement_submission))
     container.add_item(discord.ui.TextDisplay(texts.reinstatement_requirements))
     container.add_item(discord.ui.TextDisplay(texts.reinstatement_system))
-
     container.add_item(discord.ui.Separator(visible=True))
 
     button = discord.ui.Button(
@@ -61,21 +38,11 @@ class ReinstatementApplyView(discord.ui.LayoutView):
         style=discord.ButtonStyle.primary,
         custom_id="reinstatement_apply_button",
     )
-    button.callback = button_callback
+    button.callback = _open_reinstatement_modal
 
     action_row = discord.ui.ActionRow()
     action_row.add_item(button)
     container.add_item(action_row)
-
-
-async def interaction_check(interaction: Interaction[ClientT], /) -> bool:
-    user = await get_initiator(interaction)
-    if (user.rank or 0) >= 14:
-        return True
-    div = divisions.get_division(user.division) if user.division else None
-    if div and div.abbreviation == "УВП":
-        return True
-    return False
 
 
 class ReinstatementRankSelect(
@@ -89,80 +56,131 @@ class ReinstatementRankSelect(
                 custom_id=f"select_reinstatement_rank:{request_id}",
                 options=[
                     SelectOption(label=rank, value=str(index + 4))
-                    for index, rank in enumerate(config.AVAILABLE_FOR_REINSTATEMENT)
+                    for index, rank in enumerate(constants.AVAILABLE_FOR_REINSTATEMENT)
                 ],
             )
         )
         self.request_id = request_id
-        self.interaction_check = interaction_check
 
     @classmethod
-    async def from_custom_id(
-        cls,
-        interaction: discord.Interaction,
-        item: discord.ui.Select,
-        match: re.Match[str],
-    ):
-        request_id = int(match.group("id"))
-        return cls(request_id)
+    async def from_custom_id(cls, interaction: discord.Interaction, item: discord.ui.Select, match):
+        return cls(int(match.group("id")))
 
-    async def callback(self, interaction: Interaction[ClientT]) -> Any:
-        request = await ReinstatementRequest.find_one(
-            ReinstatementRequest.id == self.request_id
+    async def callback(self, interaction: discord.Interaction):
+        try:
+            officer = await AuthorizationService.require_active_soldier(interaction)
+            await safe_respond(interaction, random_loading_message(), ephemeral=True)
+            selected_rank = int(self.item.values[0])
+            result = await ReinstatementService.approve_reinstatement(
+                interaction=interaction, request_id=self.request_id, rank_index=selected_rank, officer=officer,
+            )
+            await safe_edit_message(message=interaction.message, embed=result.embed, view=result.view)
+            await safe_respond(interaction, "✅ Заявление на восстановление одобрено.")
+        except ServiceError as error:
+            await safe_respond(interaction, error.message)
+
+
+class ReinstatementManagementButton(
+    discord.ui.DynamicItem[discord.ui.Button],
+    template=r"reinst_(?P<action>\w+):(?P<id>\d+)",
+):
+    _config = {
+        "approve": ("Принять", discord.ButtonStyle.success, "👍"),
+        "reject": ("Отклонить", discord.ButtonStyle.danger, "👎"),
+    }
+
+    def __init__(self, action: str, request_id: int):
+        label, style, emoji = self._config.get(action, (action, discord.ButtonStyle.secondary, None))
+        super().__init__(
+            discord.ui.Button(
+                label=label,
+                emoji=emoji,
+                style=style,
+                custom_id=f"reinst_{action}:{request_id}",
+            )
         )
-        request.approved = True
-        request.checked = True
-        request.rank = int(self.item.values[0])
-        await request.save()
-        assert isinstance(interaction.response, InteractionResponse)
-        await interaction.response.edit_message(
-            embed=await request.to_embed(),
-            view=indicator_view(f"Одобрил {interaction.user.display_name}", emoji="👍"),
+        self.action = action
+        self.request_id = request_id
+
+    @classmethod
+    async def from_custom_id(cls, interaction: discord.Interaction, item: discord.ui.Button, match):
+        return cls(match.group("action"), int(match.group("id")))
+
+    async def _handle_reject_modal(self, interaction: discord.Interaction, officer: User) -> None:
+        req = await ReinstatementRequest.find_one(ReinstatementRequest.id == self.request_id)
+        if not req or req.status not in ("PENDING", "ATTESTATION"):
+            await safe_respond(interaction, f"❌ Заявление #{self.request_id} не найдено или уже обработано.")
+            return
+
+        try:
+            ReinstatementService.validate_reviewer_permissions(officer, req.user)
+        except ServiceError as error:
+            await safe_respond(interaction, error.message)
+            return
+
+        modal = discord.ui.Modal(title="Отклонение заявления")
+        reason_input = discord.ui.TextInput(
+            label="Причина отклонения", style=discord.TextStyle.paragraph,
+            placeholder="Введите причину отказа...", required=True, max_length=500,
         )
+        modal.add_item(reason_input)
 
-        user = await User.find_one(User.discord_id == request.user)
+        async def on_submit(modal_inter: discord.Interaction):
+            try:
+                result = await ReinstatementService.reject_reinstatement(
+                    interaction=modal_inter, request_id=self.request_id, officer=officer,
+                    reason=reason_input.value.strip(),
+                )
+            except ServiceError as error:
+                await safe_respond(modal_inter, error.message)
+                return
 
-        user.rank = request.rank
-        user.division = 0
-        await update_user_name_if_changed(
-            user, request.data.full_name, interaction.user
-        )
-        await user.save()
+            await modal_inter.response.edit_message(embed=result.embed, view=result.view)
 
-        user_discord = await interaction.client.getch_member(request.user)
+        modal.on_submit = on_submit
+        await interaction.response.send_modal(modal)
 
-        remove_roles = [
-            config.RoleId.ATTESTATION.value,
-            config.RoleId.REINFORCEMENT.value,
-        ]
-        new_user_roles = [
-            role for role in user_discord.roles if role.id not in remove_roles
-        ]
-        new_user_roles = to_division(new_user_roles, user.division)
-        new_user_roles = to_rank(new_user_roles, user.rank)
-        new_user_roles = to_position(new_user_roles, user.division, user.position)
+    async def callback(self, interaction: discord.Interaction):
+        try:
+            officer = await AuthorizationService.require_active_soldier(interaction)
 
-        await user_discord.edit(
-            nick=user.discord_nick,
-            roles=new_user_roles,
-            reason=f"Одобрено восстановление by {interaction.user.id}",
-        )
+            if self.action == "reject":
+                await self._handle_reject_modal(interaction, officer)
+            elif self.action == "approve":
+                await safe_respond(interaction, random_loading_message())
+                result = await ReinstatementService.start_attestation(interaction=interaction,
+                                                                      request_id=self.request_id, officer=officer)
+                await safe_edit_message(
+                    message=interaction.message,
+                    content=build_mentions(result.mention_ids),
+                    embed=result.embed,
+                    view=result.view,
+                )
+                await safe_respond(interaction, "✅ Кандидат переведён на этап переаттестации.")
 
-        await audit_logger.log_action(
-            action=AuditAction.REINSTATEMENT,
-            initiator=interaction.user,
-            target=user.discord_id,
-        )
-
-        # Уведомление в ЛС
-        rank_name = RANKS[request.rank] if request.rank is not None else "Неизвестно"
-        await notify_reinstatement_approved(interaction.client, request.user, rank_name)
-
-
-basic_roles = config.RoleId.ATTESTATION, config.RoleId.REINFORCEMENT
+        except ServiceError as error:
+            await safe_respond(interaction, error.message)
 
 
-class ApproveReinstatementButton(
+class ReinstatementManagementView(discord.ui.View):
+    """Вьюха для первичной заявки на восстановление (Принять / Отклонить)."""
+
+    def __init__(self, request_id: int):
+        super().__init__(timeout=None)
+        self.add_item(ReinstatementManagementButton("approve", request_id))
+        self.add_item(ReinstatementManagementButton("reject", request_id))
+
+
+class ReinstatementAttestationView(discord.ui.View):
+    """Вьюха для этапа переаттестации (Выбор звания + Отклонить)."""
+
+    def __init__(self, request_id: int):
+        super().__init__(timeout=None)
+        self.add_item(ReinstatementRankSelect(request_id=request_id))
+        self.add_item(ReinstatementManagementButton("reject", request_id))
+
+
+class LegacyApproveReinstatementButton(
     discord.ui.DynamicItem[discord.ui.Button],
     template=r"approve_reinstatement:(?P<id>\d+)",
 ):
@@ -171,63 +189,33 @@ class ApproveReinstatementButton(
             discord.ui.Button(
                 label="Принять",
                 emoji="👍",
+                style=discord.ButtonStyle.success,
                 custom_id=f"approve_reinstatement:{request_id}",
-                style=discord.ButtonStyle.primary,
             )
         )
         self.request_id = request_id
-        self.interaction_check = interaction_check
 
     @classmethod
-    async def from_custom_id(
-        cls,
-        interaction: discord.Interaction,
-        item: discord.ui.Button,
-        match: re.Match[str],
-    ):
-        request_id = int(match.group("id"))
-        return cls(request_id)
+    async def from_custom_id(cls, interaction: discord.Interaction, item: discord.ui.Button, match):
+        return cls(int(match.group("id")))
 
-    async def callback(self, interaction: Interaction[ClientT]) -> Any:
-        request = await ReinstatementRequest.find_one(
-            ReinstatementRequest.id == self.request_id
-        )
-        if not request:
-            await interaction.response.send_message("Запрос не найден.", ephemeral=True)
-            return
-
-        request.approved = True
-        request.checked = False
-
+    async def callback(self, interaction: discord.Interaction):
         try:
-            for role in basic_roles:
-                await interaction.client.http.add_role(
-                    guild_id=interaction.guild.id,
-                    user_id=request.user,
-                    role_id=role.value,
-                )
-        except Exception as e:
-            await interaction.response.send_message(
-                f"Не удалось выдать роли: {e}", ephemeral=True
+            officer = await AuthorizationService.require_active_soldier(interaction)
+            await safe_respond(interaction, random_loading_message())
+            result = await ReinstatementService.start_attestation(
+                interaction=interaction, request_id=self.request_id, officer=officer,
             )
-            return
-
-        await request.save()
-
-        assert isinstance(interaction.response, InteractionResponse)
-
-        view = discord.ui.View(timeout=None)
-        view.add_item(ReinstatementRankSelect(request_id=self.request_id))
-        view.add_item(RejectReinstatementButton(request_id=self.request_id))
-
-        await interaction.response.edit_message(
-            content=f"-# ||<@{request.user}> <@{interaction.user.id}>||",
-            embed=await request.to_embed(),
-            view=view,
-        )
+            await safe_edit_message(
+                message=interaction.message, content=build_mentions(result.mention_ids),
+                embed=result.embed, view=result.view,
+            )
+            await safe_respond(interaction, "✅ Кандидат переведён на этап переаттестации.")
+        except ServiceError as error:
+            await safe_respond(interaction, error.message)
 
 
-class RejectReinstatementButton(
+class LegacyRejectReinstatementButton(
     discord.ui.DynamicItem[discord.ui.Button],
     template=r"reject_reinstatement:(?P<id>\d+)",
 ):
@@ -236,54 +224,20 @@ class RejectReinstatementButton(
             discord.ui.Button(
                 label="Отклонить",
                 emoji="👎",
-                custom_id=f"reject_reinstatement:{request_id}",
                 style=discord.ButtonStyle.danger,
+                custom_id=f"reject_reinstatement:{request_id}",
             )
         )
         self.request_id = request_id
-        self.interaction_check = interaction_check
 
     @classmethod
-    async def from_custom_id(
-        cls,
-        interaction: discord.Interaction,
-        item: discord.ui.Button,
-        match: re.Match[str],
-    ):
-        request_id = int(match.group("id"))
-        return cls(request_id)
+    async def from_custom_id(cls, interaction: discord.Interaction, item: discord.ui.Button, match):
+        return cls(int(match.group("id")))
 
-    async def callback(self, interaction: Interaction[ClientT]) -> Any:
-        request = await ReinstatementRequest.find_one(
-            ReinstatementRequest.id == self.request_id
-        )
-        if not request:
-            await interaction.response.send_message("Запрос не найден.", ephemeral=True)
-            return
-
-        request.approved = False
-        request.checked = True
-        await request.save()
-
+    async def callback(self, interaction: discord.Interaction):
         try:
-            for role in basic_roles:
-                await interaction.client.http.remove_role(
-                    guild_id=interaction.guild.id,
-                    user_id=request.user,
-                    role_id=role.value,
-                )
-        except discord.HTTPException as e:
-            logger.warning(
-                f"Failed to remove roles from rejected user {request.user}: {e}"
-            )
-
-        assert isinstance(interaction.response, InteractionResponse)
-        await interaction.response.edit_message(
-            embed=await request.to_embed(),
-            view=indicator_view(
-                f"Отклонил {interaction.user.display_name}", emoji="👎"
-            ),
-        )
-
-        # Уведомление в ЛС
-        await notify_reinstatement_rejected(interaction.client, request.user)
+            officer = await AuthorizationService.require_active_soldier(interaction)
+            btn = ReinstatementManagementButton("reject", self.request_id)
+            await btn._handle_reject_modal(interaction, officer)
+        except ServiceError as error:
+            await safe_respond(interaction, error.message)

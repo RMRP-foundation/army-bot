@@ -4,6 +4,7 @@ import logging
 import discord
 
 from database.models import BottomMessage
+from ui.views import ICLeaveApplyView, OOCLeaveApplyView
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,7 @@ async def _execute_update(
 
 
 async def update_bottom_message(
-    bot, channel_id: int, view: discord.ui.View, embed: discord.Embed | None = None
+    bot, channel_id: int, view: ICLeaveApplyView | OOCLeaveApplyView, embed: discord.Embed | None = None
 ) -> None:
     """
     Обновляет "закрепленное" сообщение внизу канала.

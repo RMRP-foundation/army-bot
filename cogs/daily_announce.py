@@ -5,7 +5,7 @@ from pathlib import Path
 import discord
 from discord.ext import commands, tasks
 
-import config
+from core import config
 from bot import Bot
 from database import divisions
 

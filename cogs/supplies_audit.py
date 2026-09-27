@@ -1,9 +1,10 @@
 from discord.ext import commands
 
-import config
 from bot import Bot
+from core import config
 from ui.views.supplies_audit import SupplyAuditView
 from utils.bottom_message import update_bottom_message as _update_bottom_message
+from utils.permissions import is_service
 
 channel_id = config.CHANNELS["storage_audit"]
 
@@ -17,7 +18,7 @@ class SuppliesAudit(commands.Cog):
         self.bot = bot
 
     @commands.command(name="refresh_audit")
-    @commands.is_owner()
+    @is_service()
     async def update_command(self, ctx: commands.Context):
         if ctx.channel.id != channel_id:
             return

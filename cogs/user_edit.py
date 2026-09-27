@@ -1,377 +1,201 @@
-import copy
-import logging
-
 import discord
 from discord import app_commands
 from discord.ext import commands
 
-import config
 from bot import Bot
-from config import RANK_EMOJIS, RANKS, EXCLUDED_ROLES, RankIndex
+from core import config
+from core.config import RANK_EMOJIS, RankIndex
+from core.exceptions import ServiceError
 from database import divisions
 from database.models import User
 from error_handling import on_tree_error
-from utils.audit import AuditAction, audit_logger
-from utils.dismissal_logic import check_and_apply_penalty
-from utils.exceptions import StaticInputRequired
-from utils.notifications import (
-    notify_demoted,
-    notify_dismissed,
-    notify_position_changed,
-    notify_promoted, notify_blacklisted,
-)
-from utils.permissions import is_high_command
-from utils.roles import to_division, to_position, to_rank
-from utils.user_data import format_game_id, get_initiator, display_rank
-
-logger = logging.getLogger(__name__)
+from services.audit import AuditAction, audit_logger
+from services.authorization import AuthorizationService
+from services.member import MemberService
+from services.notifications import notify_blacklisted, notify_demoted, notify_dismissed, notify_position_changed, notify_promoted
+from utils.dismissal_logic import check_and_apply_penalty, cleanup_user_leaves
+from utils.helpers import random_loading_message, safe_respond
+from utils.permissions import can_assign_position, has_disciplinary_restrictions, is_higher_rank, is_officer, is_service_account
+from utils.user_data import format_rank, format_static, parse_name, parse_static, clean_name, clean_static, \
+    set_name_if_changed
 
 
 class UserEdit(commands.Cog):
     def __init__(self, bot: Bot):
         self.bot = bot
 
-        self.edit_user = app_commands.ContextMenu(
-            name="Отредактировать", callback=self.edit_user_callback
-        )
+        self.edit_user = app_commands.ContextMenu(name="Отредактировать", callback=self.edit_user_callback)
         self.bot.tree.add_command(self.edit_user)
 
-        self.fast_promotion = app_commands.ContextMenu(
-            name="Повысить (+1 зв.)", callback=self.fast_promotion_callback
-        )
+        self.fast_promotion = app_commands.ContextMenu(name="Повысить (+1 зв.)", callback=self.fast_promotion_callback)
         self.bot.tree.add_command(self.fast_promotion)
 
-        self.dismiss_user = app_commands.ContextMenu(
-            name="Уволить", callback=self.ask_dismiss_user_callback
-        )
+        self.dismiss_user = app_commands.ContextMenu(name="Уволить", callback=self.ask_dismiss_user_callback)
         self.bot.tree.add_command(self.dismiss_user)
 
         self.edit_user.error(on_tree_error)
         self.fast_promotion.error(on_tree_error)
         self.dismiss_user.error(on_tree_error)
 
-    async def _check_permissions(
-        self, interaction: discord.Interaction, target_user_db: User
-    ) -> bool:
-        editor_db = await get_initiator(interaction)
-
-        if not editor_db:
-            await interaction.response.send_message(
-                "❌ Вы не найдены в базе данных.", ephemeral=True
-            )
-            return False
-
-        if (editor_db.rank or 0) < RankIndex.CAPTAIN:
-            await interaction.response.send_message(
-                f"❌ Доступ к управлению кадрами разрешен "
-                f"со звания {display_rank(RankIndex.CAPTAIN)}.",
-                ephemeral=True,
-            )
-            return False
-
-        if (editor_db.rank or 0) <= (target_user_db.rank or 0):
-            await interaction.response.send_message(
-                "❌ Вы не можете редактировать пользователей "
-                "равного или старшего звания.",
-                ephemeral=True,
-            )
-            return False
-
-        return True
-
-    async def _sync_member_discord(
-        self, interaction: discord.Interaction, member: discord.Member, user_info: User
-    ):
-        if member is None:
-            msg = "❌ Пользователь не найден на этом сервере."
-            if interaction.response.is_done():
-                await interaction.followup.send(msg, ephemeral=True)
-            else:
-                await interaction.response.send_message(msg, ephemeral=True)
-            return False
+    async def _check_permissions(self, interaction: discord.Interaction, target_user_db: User) -> User | None:
+        """Проверяет права инициатора на управление кадрами и субординацию."""
         try:
-            roles = member.roles
+            editor_db = await AuthorizationService.require_active_soldier(interaction)
+        except ServiceError as error:
+            await safe_respond(interaction, error.message)
+            return None
 
-            if user_info.rank is None:
-                roles = [
-                    role for role in roles
-                    if role.is_default() or role.id in EXCLUDED_ROLES or not role.is_assignable()
-                ]
+        if not is_officer(editor_db):
+            await safe_respond(interaction, f"❌ Доступ к управлению кадрами разрешен со звания {format_rank(RankIndex.CAPTAIN)}.")
+            return None
 
-                prefix = "Уволен | "
-                nick_full = user_info.full_name
-                nick_short = user_info.short_name
-                if nick_full and len(prefix + nick_full) <= 32:
-                    new_nick = prefix + nick_full
-                elif nick_short and len(prefix + nick_short) <= 32:
-                    new_nick = prefix + nick_short
-                else:
-                    new_nick = prefix + (nick_full or nick_short or "Неизвестный")
-            else:
-                division = divisions.get_division(user_info.division)
+        if not is_higher_rank(editor_db, target_user_db):
+            await safe_respond(interaction, "❌ Вы не можете редактировать пользователей равного или старшего звания.")
+            return None
 
-                roles = to_division(roles, user_info.division)
-                roles = to_rank(roles, user_info.rank)
-                roles = to_position(roles, user_info.division, user_info.position)
+        return editor_db
 
-                if division is not None and division.abbreviation == "ССО":
-                    new_nick = member.display_name
-                else:
-                    new_nick = user_info.discord_nick
+    async def _finalize_change(
+        self, interaction: discord.Interaction, user: discord.Member, user_info: User, reason: str,
+        audit_action: AuditAction | None = None, notification=None,
+    ) -> None:
+        """Сохраняет изменение, логирует его и уведомляет (если задано), синхронизирует Discord-профиль и перерисовывает панель.
 
-            new_nick = new_nick[:32]
+        Единая точка выхода для всех select/modal callback'ов панели редактирования —
+        избавляет от копирования одного и того же хвоста (save → audit → notify → sync → redraw) в каждом.
+        """
+        await user_info.save()
 
-            await member.edit(
-                nick=new_nick,
-                roles=roles,
-                reason=f"Изменил {interaction.user.display_name}",
-            )
-            return True
+        if audit_action:
+            await audit_logger.log_action(audit_action, interaction.user, user)
+        if notification:
+            await notification
 
-        except discord.Forbidden:
-            try:
-                msg = (
-                    "⚠️ Данные сохранены, но не удалось обновить Discord-профиль "
-                    "(не хватает прав или иерархия ролей)."
-                )
-                if interaction.response.is_done():
-                    await interaction.followup.send(msg, ephemeral=True)
-                else:
-                    await interaction.response.send_message(msg, ephemeral=True)
-            except discord.HTTPException:
-                pass
-            return False
-        except Exception as e:
-            logger.error(f"Error syncing user {member.id if member else 'Unknown'}: {e}")
-            return False
+        await MemberService.sync_member_discord(member=user, user_db=user_info, reason=reason)
 
-    async def ask_dismiss_user_callback(
-        self, interaction: discord.Interaction, user: discord.Member
-    ):
-        user_info = await User.find_one(User.discord_id == user.id)
-        if not user_info:
-            await interaction.response.send_message(
-                "Пользователь не найден в БД.", ephemeral=True
-            )
-            return
+        await interaction.edit_original_response(view=self.build_view(user, user_info))
 
-        if user_info.rank is None:
-            await interaction.response.send_message(
-                "❌ Пользователь не состоит на службе.", ephemeral=True
-            )
+    async def ask_dismiss_user_callback(self, interaction: discord.Interaction, user: discord.Member):
+        user_info = await User.get_by_discord_id(user.id)
+        if not user_info or user_info.rank is None:
+            await safe_respond(interaction, "❌ Пользователь не состоит на службе.")
             return
 
         if not await self._check_permissions(interaction, user_info):
             return
 
         confirm_modal = discord.ui.Modal(title="Причина увольнения", timeout=120)
-        reason_input = discord.ui.TextInput(
-            label="Причина увольнения",
-            style=discord.TextStyle.paragraph,
-            max_length=1000,
-        )
+        reason_input = discord.ui.TextInput(label="Причина увольнения", style=discord.TextStyle.paragraph, max_length=1000, required=True)
 
         async def on_submit(modal_interaction: discord.Interaction):
-            old_info = copy.deepcopy(user_info)
-            initiator_db = await get_initiator(interaction)
+            current_user_info = await User.get_by_discord_id(user.id)
+            if not current_user_info or current_user_info.rank is None:
+                await safe_respond(modal_interaction, "❌ Военнослужащий уже не состоит на службе.")
+                return
 
-            await modal_interaction.response.send_message(
-                "✅ Выполняются действия...", ephemeral=True
-            )
+            initiator_db = await self._check_permissions(modal_interaction, current_user_info)
+            if not initiator_db:
+                return
+
+            await safe_respond(modal_interaction, random_loading_message())
 
             audit_msg = await audit_logger.log_action(
-                AuditAction.DISMISSED,
-                interaction.user,
-                user,
-                display_info=old_info,
-                additional_info={"Причина": reason_input.value},
+                AuditAction.DISMISSED, modal_interaction.user, user, additional_info={"Причина": reason_input.value},
             )
+            penalty_applied = await check_and_apply_penalty(modal_interaction, current_user_info, initiator_db, audit_msg.jump_url)
 
-            penalty_applied = await check_and_apply_penalty(
-                modal_interaction, user_info, initiator_db, audit_msg.jump_url
-            )
+            current_user_info.rank = None
+            current_user_info.division = None
+            current_user_info.position = None
+            await current_user_info.save()
 
-            user_info.rank = None
-            user_info.division = None
-            user_info.position = None
-            await user_info.save()
-
-            from utils.dismissal_logic import cleanup_user_leaves
-            await cleanup_user_leaves(interaction.client, user.id)
-
-            await modal_interaction.edit_original_response(
-                content=f"✅ {user.mention} уволен."
-            )
-
-            try:
-                member = await interaction.client.getch_member(user.id)
-                await self._sync_member_discord(interaction, member, user_info)
-            except discord.HTTPException as e:
-                logger.warning(f"Failed to sync dismissed user {user.id}: {e}")
-
-            await notify_dismissed(
-                interaction.client, user.id, reason_input.value, by_report=False
-            )
-
+            await cleanup_user_leaves(modal_interaction.client, user.id)
+            await MemberService.sync_member_discord(member=user, user_db=current_user_info, reason=f"Уволил {modal_interaction.user.display_name}")
+            await notify_dismissed(modal_interaction.client, user.id, reason_input.value, by_report=False)
             if penalty_applied:
-                await notify_blacklisted(interaction.client, user.id, "Неустойка", "14 дней")
+                await notify_blacklisted(modal_interaction.client, user.id, "Неустойка", "14 дней")
+
+            await safe_respond(modal_interaction, f"✅ {user.mention} уволен.")
 
         confirm_modal.add_item(reason_input)
-        rank_name = (
-            RANKS[user_info.rank] if user_info.rank is not None else "Не найдено"
-        )
-        confirm_modal.add_item(
-            discord.ui.TextDisplay(
-                f"-# Вы собираетесь уволить {user.display_name} со звания {rank_name}"
-            )
-        )
+        rank_name = config.RANKS[user_info.rank] if user_info.rank is not None else "Не указано"
+        confirm_modal.add_item(discord.ui.TextDisplay(f"-# Вы собираетесь уволить {user.display_name} со звания {rank_name}"))
         confirm_modal.on_submit = on_submit
-
         await interaction.response.send_modal(confirm_modal)
 
-    async def fast_promotion_callback(
-        self, interaction: discord.Interaction, user: discord.Member
-    ):
-        user_info = await User.find_one(User.discord_id == user.id)
-        if not user_info:
-            await interaction.response.send_message(
-                "Пользователь не найден.", ephemeral=True
-            )
+    async def fast_promotion_callback(self, interaction: discord.Interaction, user: discord.Member):
+        user_info = await User.get_by_discord_id(user.id)
+        if not user_info or user_info.rank is None:
+            await safe_respond(interaction, "❌ Пользователь не состоит на службе.")
             return
 
-        if user_info.rank is None:
-            await interaction.response.send_message(
-                "❌ Пользователь не состоит на службе.", ephemeral=True
-            )
+        editor = await self._check_permissions(interaction, user_info)
+        if not editor:
             return
 
-        if not await self._check_permissions(interaction, user_info):
+        if has_disciplinary_restrictions(user):
+            await safe_respond(interaction, "❌ Вы не можете повысить военнослужащего с активными дисциплинарными взысканиями или под расследованием.")
             return
 
-        user_roles_ids = [role.id for role in user.roles]
-        if any(rid in config.PENALTY_ROLES for rid in user_roles_ids) or config.INVESTIGATION_ROLE in user_roles_ids:
-            await interaction.response.send_message(
-                "❌ Вы не можете повысить военнослужащего "
-                "с активными дисциплинарными взысканиями или под расследованием.",
-                ephemeral=True
-            )
+        if user_info.rank >= len(config.RANKS) - 1:
+            await safe_respond(interaction, f"⚠️ {user.mention} уже имеет максимальное звание!")
             return
 
-        old_rank = user_info.rank
-
-        if user_info.rank < len(config.RANKS) - 1:
-            user_info.rank += 1
-        else:
-            await interaction.response.send_message(
-                f"⚠️ {user.mention} уже имеет максимальное звание!", ephemeral=True
-            )
+        target_rank = user_info.rank + 1
+        if not is_service_account(editor.discord_id) and (editor.rank or 0) <= target_rank:
+            await safe_respond(interaction, "❌ Вы не можете присвоить звание выше или равное вашему.")
             return
 
-        editor = await get_initiator(interaction)
-        if (editor.rank or 0) <= user_info.rank:
-            await interaction.response.send_message(
-                "❌ Вы не можете присвоить звание выше или равное вашему.",
-                ephemeral=True,
-            )
-            return
-
+        user_info.rank = target_rank
         rank_name = config.RANKS[user_info.rank]
-        await interaction.response.send_message(
-            f"📈 {user.mention} повышен до звания **{rank_name}**.", ephemeral=True
-        )
-
         await user_info.save()
-        await self._sync_member_discord(interaction, user, user_info)
 
-        if (old_rank or -1) < user_info.rank:
-            action = AuditAction.PROMOTED
-        else:
-            action = AuditAction.DEMOTED
-
-        await audit_logger.log_action(action, interaction.user, user)
-
-        rank_name = config.RANKS[user_info.rank]
-
-        # Уведомление в ЛС
+        await MemberService.sync_member_discord(member=user, user_db=user_info, reason=f"Повысил {interaction.user.display_name}")
+        await audit_logger.log_action(AuditAction.PROMOTED, interaction.user, user)
         await notify_promoted(interaction.client, user.id, rank_name)
+        await safe_respond(interaction, f"📈 {user.mention} повышен до звания **{rank_name}**.")
 
-    async def edit_user_callback(
-        self, interaction: discord.Interaction, user: discord.Member
-    ):
-        user_info = await User.find_one(User.discord_id == user.id)
+    async def edit_user_callback(self, interaction: discord.Interaction, user: discord.Member):
+        user_info = await User.get_by_discord_id(user.id)
         if not user_info:
-            await interaction.response.send_message(
-                "Пользователь не найден.", ephemeral=True
-            )
+            await safe_respond(interaction, "❌ Пользователь не найден в базе данных.")
             return
 
         if not await self._check_permissions(interaction, user_info):
             return
 
-        view = self.build_view(user, user_info)
-        await interaction.response.send_message(view=view, ephemeral=True)
+        await interaction.response.send_message(view=self.build_view(user, user_info), ephemeral=True)
 
-    def build_view(self, user: discord.Member, user_info: User):
-        layout = discord.ui.LayoutView(timeout=300)
-
-        container = discord.ui.Container()
-        container.add_item(
-            discord.ui.TextDisplay(f"## Редактирование информации {user.mention}")
-        )
-        container.add_item(discord.ui.Separator())
-
+    def _build_personal_data_section(self, user: discord.Member, user_info: User) -> discord.ui.Section:
         async def edit_data_callback(interaction: discord.Interaction):
             modal = discord.ui.Modal(title="Личные данные")
-            name_input = discord.ui.TextInput(
-                label="Имя Фамилия",
-                default=user_info.full_name or "",
-                max_length=50,
-                required=False,
-            )
-            static_input = discord.ui.TextInput(
-                label="Статик",
-                default=str(user_info.static) if user_info.static else "",
-                max_length=10,
-                required=False,
-            )
+            name_input = discord.ui.TextInput(label="Имя Фамилия", default=user_info.full_name or "", max_length=50, required=False)
+            static_input = discord.ui.TextInput(label="Статик", default=str(user_info.static) if user_info.static else "", max_length=10, required=False)
             modal.add_item(name_input)
             modal.add_item(static_input)
 
             async def data_submit(modal_inter: discord.Interaction):
-                old_full_name = user_info.full_name
-                old_static = user_info.static
+                await modal_inter.response.defer(ephemeral=True)
 
-                if name_input.value:
-                    parts = name_input.value.split()
-                    if len(parts) >= 2:
-                        user_info.first_name = parts[0]
-                        user_info.last_name = " ".join(parts[1:])
-                    else:
-                        user_info.first_name = name_input.value
-                        user_info.last_name = ""
-
-                if static_input.value and static_input.value.replace("-", "").isdigit():
-                    user_info.static = int(static_input.value.replace("-", ""))
-
-                await user_info.save()
-
-                if (
-                    user_info.full_name != old_full_name
-                    or user_info.static != old_static
-                ):
-                    from utils.user_data import invalidate_user_cache
-                    invalidate_user_cache(user.id)
-                    await audit_logger.log_action(
-                        AuditAction.NICKNAME_CHANGED, modal_inter.user, user
-                    )
-                    await self._sync_member_discord(modal_inter, user, user_info)
+                old_full_name, old_static = user_info.full_name, user_info.static
 
                 try:
-                    await modal_inter.response.edit_message(
-                        view=self.build_view(user, user_info)
-                    )
-                except discord.NotFound:
-                    pass
+                    if name_input.value:
+                        clean = clean_name(name_input.value)
+                        set_name_if_changed(user_info, clean)
+
+                    if static_input.value:
+                        user_info.static = clean_static(static_input.value)
+
+                except ServiceError as error:
+                    await safe_respond(modal_inter, error.message)
+                    return
+
+                changed = user_info.full_name != old_full_name or user_info.static != old_static
+                await self._finalize_change(
+                    modal_inter, user, user_info, reason=f"Изменение данных {modal_inter.user.display_name}",
+                    audit_action=AuditAction.NICKNAME_CHANGED if changed else None,
+                )
 
             modal.on_submit = data_submit
             await interaction.response.send_modal(modal)
@@ -379,126 +203,116 @@ class UserEdit(commands.Cog):
         change_user_data = discord.ui.Button(emoji="📝")
         change_user_data.callback = edit_data_callback
 
-        data_section = discord.ui.Section(accessory=change_user_data)
-        data_section.add_item(discord.ui.TextDisplay("### Личные данные"))
-        data_section.add_item(
-            discord.ui.TextDisplay(
-                f"Имя Фамилия: **{user_info.full_name or 'Не установлено'}**"
-            )
-        )
-        data_section.add_item(
-            discord.ui.TextDisplay(
-                f"Статик: **`{format_game_id(user_info.static) or 'Не установлен'}`**"
-            )
-        )
-        container.add_item(data_section)
-        container.add_item(discord.ui.Separator())
+        section = discord.ui.Section(accessory=change_user_data)
+        section.add_item(discord.ui.TextDisplay("### Личные данные"))
+        section.add_item(discord.ui.TextDisplay(f"Имя Фамилия: **{user_info.full_name or 'Не установлено'}**"))
+        section.add_item(discord.ui.TextDisplay(f"Статик: **`{format_static(user_info.static) or 'Не установлен'}`**"))
+        return section
 
-        container.add_item(discord.ui.TextDisplay("### Звание"))
+    def _build_rank_row(self, user: discord.Member, user_info: User) -> discord.ui.ActionRow:
         select_rank = discord.ui.Select(
             placeholder="Изменить звание",
             options=[
-                discord.SelectOption(
-                    default=index == user_info.rank,
-                    emoji=RANK_EMOJIS[index],
-                    label=name,
-                    value=str(index),
-                )
+                discord.SelectOption(default=index == user_info.rank, emoji=RANK_EMOJIS[index], label=name, value=str(index))
                 for index, name in enumerate(config.RANKS)
             ],
         )
 
         async def rank_callback(interaction: discord.Interaction):
-            if not await self._check_permissions(interaction, user_info):
+            await interaction.response.defer()
+
+            editor = await self._check_permissions(interaction, user_info)
+            if not editor:
                 return
 
-            editor = await get_initiator(interaction)
             new_rank = int(select_rank.values[0])
-
             old_rank = user_info.rank if user_info.rank is not None else -1
-            if new_rank > old_rank:
-                user_roles_ids = [role.id for role in user.roles]
-                if any(rid in config.PENALTY_ROLES for rid in
-                       user_roles_ids) or config.INVESTIGATION_ROLE in user_roles_ids:
-                    await interaction.response.send_message(
-                        "❌ Вы не можете повысить военнослужащего "
-                        "с активными дисциплинарными взысканиями или под расследованием.",
-                        ephemeral=True
-                    )
-                    return
 
-            if (editor.rank or 0) <= new_rank:
-                await interaction.response.send_message(
-                    "❌ Вы не можете присвоить звание выше или равное вашему.",
-                    ephemeral=True,
-                )
+            if new_rank > old_rank and has_disciplinary_restrictions(user):
+                await safe_respond(interaction, "❌ Вы не можете повысить военнослужащего с активными дисциплинарными взысканиями или под расследованием.")
+                await interaction.edit_original_response(view=self.build_view(user, user_info))
+                return
+
+            if not is_service_account(editor.discord_id) and (editor.rank or 0) <= new_rank:
+                await safe_respond(interaction, "❌ Вы не можете присвоить звание выше или равное вашему.")
+                await interaction.edit_original_response(view=self.build_view(user, user_info))
                 return
 
             user_info.rank = new_rank
-            await user_info.save()
 
-            if interaction.response.is_done():
-                await interaction.edit_original_response(
-                    view=self.build_view(user, user_info)
-                )
-            else:
-                await interaction.response.edit_message(
-                    view=self.build_view(user, user_info)
-                )
-
-            await self._sync_member_discord(interaction, user, user_info)
-
+            audit_action, notification = None, None
             if old_rank != new_rank:
-                if (old_rank or -1) < new_rank:
-                    action = AuditAction.PROMOTED
-                    # Уведомление в ЛС о повышении
-                    await notify_promoted(
-                        interaction.client, user.id, config.RANKS[new_rank]
-                    )
+                if old_rank < new_rank:
+                    audit_action = AuditAction.PROMOTED
+                    notification = notify_promoted(interaction.client, user.id, config.RANKS[new_rank])
                 else:
-                    action = AuditAction.DEMOTED
-                    # Уведомление в ЛС о понижении
-                    await notify_demoted(
-                        interaction.client, user.id, config.RANKS[new_rank]
-                    )
-                await audit_logger.log_action(action, interaction.user, user)
+                    audit_action = AuditAction.DEMOTED
+                    notification = notify_demoted(interaction.client, user.id, config.RANKS[new_rank])
+
+            await self._finalize_change(
+                interaction, user, user_info, reason=f"Изменение звания {interaction.user.display_name}",
+                audit_action=audit_action, notification=notification,
+            )
 
         select_rank.callback = rank_callback
+        row = discord.ui.ActionRow()
+        row.add_item(select_rank)
+        return row
 
-        rank_row = discord.ui.ActionRow()
-        rank_row.add_item(select_rank)
-        container.add_item(rank_row)
+    def _build_division_row(self, user: discord.Member, user_info: User) -> discord.ui.ActionRow:
+        select_division = discord.ui.Select(
+            placeholder="Не в подразделении...",
+            options=[
+                discord.SelectOption(default=(user_info.division == div.division_id), emoji=div.emoji, label=div.name, value=str(div.division_id))
+                for div in divisions.divisions
+            ],
+        )
 
+        async def division_callback(interaction: discord.Interaction):
+            await interaction.response.defer()
+
+            editor = await self._check_permissions(interaction, user_info)
+            if not editor:
+                return
+
+            new_div = int(select_division.values[0])
+            old_div = user_info.division
+            if old_div == new_div:
+                await interaction.edit_original_response(content=None, view=self.build_view(user, user_info))
+                await safe_respond(interaction, "Изменений не было.")
+                return
+
+            user_info.division = new_div
+            user_info.position = None
+            audit_action = AuditAction.DIVISION_ASSIGNED if old_div is None else AuditAction.DIVISION_CHANGED
+
+            await self._finalize_change(
+                interaction, user, user_info, reason=f"Смена подразделения {interaction.user.display_name}", audit_action=audit_action,
+            )
+
+        select_division.callback = division_callback
+        row = discord.ui.ActionRow()
+        row.add_item(select_division)
+        return row
+
+    def _build_position_block(self, user: discord.Member, user_info: User) -> tuple[discord.ui.Section, discord.ui.ActionRow | None]:
         async def manual_position_callback(interaction: discord.Interaction):
             change_modal = discord.ui.Modal(title="Изменение должности")
             position_input = discord.ui.TextInput(
-                label="Должность",
-                placeholder="Введите новую должность",
-                style=discord.TextStyle.short,
-                required=True,
-                max_length=100,
-                default=user_info.position or "",
+                label="Должность", placeholder="Введите новую должность", style=discord.TextStyle.short,
+                required=True, max_length=100, default=user_info.position or "",
             )
             change_modal.add_item(position_input)
 
             async def modal_callback(modal_interaction: discord.Interaction):
+                await safe_respond(modal_interaction, random_loading_message())
+
                 old_position = user_info.position
-                user_info.position = position_input.value
-                await user_info.save()
-
-                if old_position != user_info.position:
-                    await audit_logger.log_action(
-                        AuditAction.POSITION_CHANGED, modal_interaction.user, user
-                    )
-                    # Уведомление в ЛС
-                    await notify_position_changed(
-                        modal_interaction.client, user.id, user_info.position
-                    )
-
-                await self._sync_member_discord(modal_interaction, user, user_info)
-
-                await modal_interaction.response.edit_message(
-                    view=self.build_view(user, user_info)
+                user_info.position = position_input.value.strip()
+                await self._finalize_change(
+                    modal_interaction, user, user_info, reason=f"Смена должности {modal_interaction.user.display_name}",
+                    audit_action=AuditAction.POSITION_CHANGED if old_position != user_info.position else None,
+                    notification=notify_position_changed(modal_interaction.client, user.id, user_info.position) if old_position != user_info.position else None,
                 )
 
             change_modal.on_submit = modal_callback
@@ -507,172 +321,90 @@ class UserEdit(commands.Cog):
         change_position = discord.ui.Button(emoji="📝")
         change_position.callback = manual_position_callback
 
+        section = discord.ui.Section(accessory=change_position)
+        section.add_item(discord.ui.TextDisplay("### Должность"))
+
+        div_obj = divisions.get_division(user_info.division) if user_info.division else None
+        if not (div_obj and div_obj.positions):
+            section.add_item(discord.ui.TextDisplay(f"_{user_info.position or 'Не установлена'}_"))
+            return section, None
+
+        options = [
+            discord.SelectOption(default=(user_info.position == pos.name), label=pos.name, value=pos.name)
+            for pos in div_obj.positions
+        ]
+        if user_info.position and not any(opt.value == user_info.position for opt in options):
+            options.insert(0, discord.SelectOption(label=user_info.position, value=user_info.position, default=True))
+
+        position_select = discord.ui.Select(placeholder="Выберите должность", options=options[:25])
+
+        async def position_select_callback(interaction: discord.Interaction):
+            await interaction.response.defer()
+
+            editor = await self._check_permissions(interaction, user_info)
+            if not editor:
+                return
+
+            new_position_name = position_select.values[0]
+            target_pos_obj = next((p for p in (div_obj.positions or []) if p.name == new_position_name), None)
+            if not target_pos_obj:
+                await safe_respond(interaction, "❌ Не удалось определить привилегию должности.")
+                return
+
+            editor_pos_obj = None
+            if editor.division and editor.position:
+                editor_div_obj = divisions.get_division(editor.division)
+                if editor_div_obj:
+                    editor_pos_obj = next((p for p in (editor_div_obj.positions or []) if p.name == editor.position),
+                                          None)
+
+            if not can_assign_position(
+                    editor_discord_id=editor.discord_id,
+                    editor_division_id=editor.division,
+                    editor_privilege=editor_pos_obj.privilege if editor_pos_obj else None,
+                    target_division_id=div_obj.division_id,
+                    target_privilege=target_pos_obj.privilege,
+            ):
+                await safe_respond(interaction, "❌ Недостаточно привилегий для данного назначения.")
+                await interaction.edit_original_response(view=self.build_view(user, user_info))
+                return
+
+            old_position = user_info.position
+            user_info.position = new_position_name
+            await self._finalize_change(
+                interaction, user, user_info, reason=f"Смена должности {interaction.user.display_name}",
+                audit_action=AuditAction.POSITION_CHANGED if old_position != user_info.position else None,
+                notification=notify_position_changed(interaction.client, user.id,
+                                                     user_info.position) if old_position != user_info.position else None,
+            )
+
+        position_select.callback = position_select_callback
+        row = discord.ui.ActionRow()
+        row.add_item(position_select)
+        return section, row
+
+    def build_view(self, user: discord.Member, user_info: User) -> discord.ui.LayoutView:
+        """Собирает панель редактирования кадровой информации из независимых секций."""
+        layout = discord.ui.LayoutView(timeout=300)
+        container = discord.ui.Container()
+        container.add_item(discord.ui.TextDisplay(f"## Редактирование информации {user.mention}"))
+        container.add_item(discord.ui.Separator())
+
+        container.add_item(self._build_personal_data_section(user, user_info))
+        container.add_item(discord.ui.Separator())
+
+        container.add_item(discord.ui.TextDisplay("### Звание"))
+        container.add_item(self._build_rank_row(user, user_info))
         container.add_item(discord.ui.Separator())
 
         container.add_item(discord.ui.TextDisplay("### Подразделение"))
-
-        change_division_select = discord.ui.Select(
-            placeholder="Не в подразделении...",
-            options=[
-                discord.SelectOption(
-                    default=(user_info.division == div.division_id),
-                    emoji=div.emoji,
-                    label=div.name,
-                    value=str(div.division_id),
-                )
-                for div in divisions.divisions
-            ],
-        )
-
-        async def division_callback(interaction: discord.Interaction):
-            if not await self._check_permissions(interaction, user_info):
-                return
-
-            new_div = int(change_division_select.values[0])
-            old_div = user_info.division
-
-            if user_info.division != new_div:
-                user_info.division = new_div
-                user_info.position = None
-                await user_info.save()
-
-                if old_div is None:
-                    action = AuditAction.DIVISION_ASSIGNED
-                else:
-                    action = AuditAction.DIVISION_CHANGED
-                await audit_logger.log_action(action, interaction.user, user)
-
-                await self._sync_member_discord(interaction, user, user_info)
-
-            await interaction.response.edit_message(
-                view=self.build_view(user, user_info)
-            )
-
-        change_division_select.callback = division_callback
-
-        division_row = discord.ui.ActionRow()
-        division_row.add_item(change_division_select)
-        container.add_item(division_row)
-
+        container.add_item(self._build_division_row(user, user_info))
         container.add_item(discord.ui.Separator())
 
-        position_section = discord.ui.Section(accessory=change_position)
-        position_section.add_item(discord.ui.TextDisplay("### Должность"))
+        position_section, position_row = self._build_position_block(user, user_info)
         container.add_item(position_section)
-
-        div_obj = (
-            divisions.get_division(user_info.division) if user_info.division else None
-        )
-
-        if div_obj and div_obj.positions:
-            options = [
-                discord.SelectOption(
-                    default=(user_info.position == pos.name),
-                    label=pos.name,
-                    value=pos.name,
-                )
-                for pos in div_obj.positions
-            ]
-
-            if user_info.position and not any(
-                [opt.value == user_info.position for opt in options]
-            ):
-                options.insert(
-                    0,
-                    discord.SelectOption(
-                        label=user_info.position, value=user_info.position, default=True
-                    ),
-                )
-
-            position_select = discord.ui.Select(
-                placeholder="Выберите должность",
-                options=options[:25],
-            )
-
-            async def position_select_callback(interaction: discord.Interaction):
-                if not await self._check_permissions(interaction, user_info):
-                    return
-
-                editor = await get_initiator(interaction)
-                new_position_name = position_select.values[0]
-
-                IS_GENSTAB_OVERRIDE = (
-                        editor.division == 7
-                        and is_high_command(editor)
-                        and div_obj.division_id != 7
-                )
-
-                IS_GENARMY = editor.rank == 18
-
-                if not (IS_GENARMY or IS_GENSTAB_OVERRIDE):
-                    if not (editor.division and editor.position):
-                        await interaction.response.edit_message(
-                            view=self.build_view(user, user_info)
-                        )
-                        await interaction.followup.send(
-                            "❌ Ваша должность не определена, назначение недоступно.",
-                            ephemeral=True,
-                        )
-                        return
-
-                    editor_div_obj = divisions.get_division(editor.division)
-                    editor_pos_obj = next(
-                        (p for p in (editor_div_obj.positions or []) if p.name == editor.position),
-                        None,
-                    )
-                    target_pos_obj = next(
-                        (p for p in (div_obj.positions or []) if p.name == new_position_name),
-                        None,
-                    )
-
-                    if not (editor_pos_obj and target_pos_obj):
-                        await interaction.response.edit_message(
-                            view=self.build_view(user, user_info)
-                        )
-                        await interaction.followup.send(
-                            "❌ Не удалось определить привилегии должностей.",
-                            ephemeral=True,
-                        )
-                        return
-
-                    if editor_pos_obj.privilege.value <= target_pos_obj.privilege.value:
-                        await interaction.response.edit_message(
-                            view=self.build_view(user, user_info)
-                        )
-                        await interaction.followup.send(
-                            "❌ Недостаточно привилегий для данного назначения.",
-                            ephemeral=True,
-                        )
-                        return
-
-                old_position = user_info.position
-                user_info.position = new_position_name
-                await user_info.save()
-
-                await interaction.response.edit_message(
-                    view=self.build_view(user, user_info)
-                )
-
-                if old_position != user_info.position:
-                    await audit_logger.log_action(
-                        AuditAction.POSITION_CHANGED, interaction.user, user
-                    )
-                    # Уведомление в ЛС
-                    await notify_position_changed(
-                        interaction.client, user.id, user_info.position
-                    )
-
-                await self._sync_member_discord(interaction, user, user_info)
-
-            position_select.callback = position_select_callback
-
-            position_row = discord.ui.ActionRow()
-            position_row.add_item(position_select)
+        if position_row:
             container.add_item(position_row)
-        else:
-            position_section.add_item(
-                discord.ui.TextDisplay(f"_{user_info.position or 'Не установлена'}_")
-            )
 
         layout.add_item(container)
         return layout

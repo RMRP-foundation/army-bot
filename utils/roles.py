@@ -1,8 +1,8 @@
 import discord
 from discord import Role
 
-import config
-from config import RoleId
+from core import config
+from core.config import RoleId
 from database import divisions
 
 
@@ -45,7 +45,7 @@ def to_rank(initial_roles: list[discord.Role], rank: int | None) -> list[Role]:
 
     if rank is not None:
         target_role_ids.add(RoleId.MILITARY.value)
-        if rank >= 4:
+        if rank >= config.RankIndex.SENIOR_SERGEANT:
             target_role_ids.add(RoleId.CONTRACT.value)
         if rank >= config.RankIndex.MAJOR:
             target_role_ids.add(RoleId.BRIGADE_HQ.value)

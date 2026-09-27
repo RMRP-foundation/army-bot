@@ -1,116 +1,49 @@
-import datetime
-import logging
 import re
-from typing import Any
 
 import discord
-from discord import Interaction, InteractionResponse
-from discord._types import ClientT
 
-import config
+from core.exceptions import ServiceError
+from database.models import RoleType, User
+from services.authorization import AuthorizationService
+from services.role_getting import RoleService
 import texts
-from database import divisions
-from database.models import RoleRequest, RoleType, User
-from ui.views.indicators import indicator_view
-from utils.audit import AuditAction, audit_logger
-from utils.exceptions import StaticInputRequired
-from utils.notifications import notify_role_approved, notify_role_rejected
-from utils.user_data import format_game_id, get_initiator, get_user_defaults
-
-logger = logging.getLogger(__name__)
-
-ROLE_DISPLAY_NAMES = {
-    RoleType.ARMY: "ВС РФ",
-    RoleType.KMB: "КМБ",
-    RoleType.SUPPLY_ACCESS: "Доступ к поставке",
-    RoleType.GOV_EMPLOYEE: "Гос. сотрудник",
-}
-
-ROLE_REQUIRED_RANKS = {
-    RoleType.ARMY: "Младший лейтенант",
-    RoleType.KMB: "Младший лейтенант",
-    RoleType.SUPPLY_ACCESS: "Подполковник",
-    RoleType.GOV_EMPLOYEE: "Полковник",
-}
-
-async def _check_can_apply(interaction: discord.Interaction, check_blacklist: bool = False) -> bool:
-    user = await User.find_one(User.discord_id == interaction.user.id)
-    if user and user.rank is not None:
-        await interaction.response.send_message(
-            "❌ Вы уже состоите на службе.", ephemeral=True
-        )
-        return False
-
-    processing = await RoleRequest.find_one(
-        RoleRequest.user == interaction.user.id,
-        RoleRequest.status == "PROCESSING",
-    )
-    if processing is not None:
-        await interaction.response.send_message(
-            f"### ⏳ Ваша заявка #{processing.id} сейчас рассматривается офицером.\nПодождите завершения.",
-            ephemeral=True,
-        )
-        return False
-
-    pending = await RoleRequest.find_one(
-        RoleRequest.user == interaction.user.id,
-        RoleRequest.status == "PENDING",
-    )
-    if pending is not None:
-        age = discord.utils.utcnow() - pending.sent_at.replace(tzinfo=datetime.timezone.utc)
-        if age < config.ROLE_RESUBMIT_COOLDOWN:
-            retry_at = pending.sent_at.replace(tzinfo=datetime.timezone.utc) + config.ROLE_RESUBMIT_COOLDOWN
-            await interaction.response.send_message(
-                f"### ⏳ Заявка #{pending.id} уже подана\n"
-                f"Повторно подать можно {discord.utils.format_dt(retry_at, 'R')}, "
-                f"если текущая не будет рассмотрена.",
-                ephemeral=True,
-            )
-            return False
-
-    if check_blacklist:
-        user = await get_initiator(interaction)
-        if user and user.blacklist:
-            await interaction.response.send_message(
-                "### Вы не можете подать заявление на роль, "
-                "так как на вас наложен черный список.\n"
-                f"Дата окончания: {discord.utils.format_dt(user.blacklist.ends_at, 'd')}.",
-                ephemeral=True,
-            )
-            return False
-
-    return True
-
-async def army_button_callback(interaction: discord.Interaction):
-    if not await _check_can_apply(interaction, check_blacklist=True):
-        return
-    _, user_name, static_id = await get_user_defaults(interaction)
-    from ui.modals.role_getting import RoleRequestModal
-    await interaction.response.send_modal(RoleRequestModal(user_name=user_name, static_id=static_id))
+from ui.modals.role_getting import (
+    GovEmployeeModal,
+    KMBRequestModal,
+    RoleRequestModal,
+    SupplyAccessModal,
+)
+from utils.helpers import safe_respond, safe_edit_message, build_mentions, random_loading_message
+from utils.user_data import format_static
 
 
-async def kmb_button_callback(interaction: discord.Interaction):
-    if not await _check_can_apply(interaction, check_blacklist=True):
-        return
-    _, user_name, static_id = await get_user_defaults(interaction)
-    from ui.modals.role_getting import KMBRequestModal
-    await interaction.response.send_modal(KMBRequestModal(user_name=user_name, static_id=static_id))
+async def _get_applicant_defaults(user_id: int) -> tuple[str, str]:
+    """Возвращает предзаполненное имя и статик пользователя, если они есть."""
+    user = await User.get_by_discord_id(user_id)
+    default_name = user.full_name if user and user.full_name else ""
+    default_static = format_static(user.static) if user and user.static else ""
+    return default_name, default_static
 
 
-async def supply_access_button_callback(interaction: discord.Interaction):
-    if not await _check_can_apply(interaction):
-        return
-    _, user_name, static_id = await get_user_defaults(interaction)
-    from ui.modals.role_getting import SupplyAccessModal
-    await interaction.response.send_modal(SupplyAccessModal(user_name=user_name, static_id=static_id))
+async def _handle_role_apply(interaction: discord.Interaction, role_type: RoleType) -> None:
+    """Проверяет ограничения и открывает соответствующую модалку."""
+    try:
+        check_bl = role_type in (RoleType.ARMY, RoleType.KMB)
+        await RoleService.validate_can_apply(interaction.user.id, interaction.channel, check_blacklist=check_bl)
+        name, static = await _get_applicant_defaults(interaction.user.id)
 
+        match role_type:
+            case RoleType.ARMY:
+                await interaction.response.send_modal(RoleRequestModal(user_name=name, static_id=static))
+            case RoleType.KMB:
+                await interaction.response.send_modal(KMBRequestModal(user_name=name, static_id=static))
+            case RoleType.SUPPLY_ACCESS:
+                await interaction.response.send_modal(SupplyAccessModal(user_name=name, static_id=static))
+            case RoleType.GOV_EMPLOYEE:
+                await interaction.response.send_modal(GovEmployeeModal(user_name=name, static_id=static))
 
-async def gov_employee_button_callback(interaction: discord.Interaction):
-    if not await _check_can_apply(interaction):
-        return
-    _, user_name, static_id = await get_user_defaults(interaction)
-    from ui.modals.role_getting import GovEmployeeModal
-    await interaction.response.send_modal(GovEmployeeModal(user_name=user_name, static_id=static_id))
+    except ServiceError as error:
+        await safe_respond(interaction, error.message)
 
 
 class RoleApplyView(discord.ui.LayoutView):
@@ -123,17 +56,25 @@ class RoleApplyView(discord.ui.LayoutView):
     container.add_item(discord.ui.TextDisplay(texts.role_requirements))
     container.add_item(discord.ui.Separator(visible=True))
 
-    army_button = discord.ui.Button(label="ВС РФ", emoji="🎖️", style=discord.ButtonStyle.primary, custom_id="role_apply_army")
-    army_button.callback = army_button_callback
+    army_button = discord.ui.Button(
+        label="ВС РФ", emoji="🎖️", style=discord.ButtonStyle.primary, custom_id="role_apply_army"
+    )
+    army_button.callback = lambda inter: _handle_role_apply(inter, RoleType.ARMY)
 
-    kmb_button = discord.ui.Button(label="КМБ", emoji="🔰", style=discord.ButtonStyle.secondary, custom_id="role_apply_kmb")
-    kmb_button.callback = kmb_button_callback
+    kmb_button = discord.ui.Button(
+        label="КМБ", emoji="🔰", style=discord.ButtonStyle.secondary, custom_id="role_apply_kmb"
+    )
+    kmb_button.callback = lambda inter: _handle_role_apply(inter, RoleType.KMB)
 
-    supply_button = discord.ui.Button(label="Доступ к поставке", emoji="📦", style=discord.ButtonStyle.secondary, custom_id="role_apply_supply")
-    supply_button.callback = supply_access_button_callback
+    supply_button = discord.ui.Button(
+        label="Доступ к поставке", emoji="📦", style=discord.ButtonStyle.secondary, custom_id="role_apply_supply"
+    )
+    supply_button.callback = lambda inter: _handle_role_apply(inter, RoleType.SUPPLY_ACCESS)
 
-    gov_button = discord.ui.Button(label="Гос. сотрудник", emoji="🏛️", style=discord.ButtonStyle.secondary, custom_id="role_apply_gov")
-    gov_button.callback = gov_employee_button_callback
+    gov_button = discord.ui.Button(
+        label="Гос. сотрудник", emoji="🏛️", style=discord.ButtonStyle.secondary, custom_id="role_apply_gov"
+    )
+    gov_button.callback = lambda inter: _handle_role_apply(inter, RoleType.GOV_EMPLOYEE)
 
     action_row = discord.ui.ActionRow()
     action_row.add_item(army_button)
@@ -141,93 +82,6 @@ class RoleApplyView(discord.ui.LayoutView):
     action_row.add_item(supply_button)
     action_row.add_item(gov_button)
     container.add_item(action_row)
-
-
-def get_required_rank(role_type: RoleType) -> int:
-    ranks = {
-        RoleType.ARMY: config.RankIndex.JUNIOR_LIEUTENANT,
-        RoleType.KMB: config.RankIndex.JUNIOR_LIEUTENANT,
-        RoleType.SUPPLY_ACCESS: config.RankIndex.LIEUTENANT_COLONEL,
-        RoleType.GOV_EMPLOYEE: config.RankIndex.LIEUTENANT_COLONEL,
-    }
-    return ranks.get(role_type, config.RankIndex.COLONEL)
-
-
-async def check_approve_permission(interaction: Interaction[ClientT], request: RoleRequest) -> bool:
-    try:
-        user = await get_initiator(interaction)
-    except StaticInputRequired:
-        return False
-
-    if not user:
-        return False
-
-    if (user.rank or 0) >= get_required_rank(request.role_type):
-        return True
-
-    if request.role_type in [RoleType.ARMY, RoleType.KMB]:
-        division = divisions.get_division(user.division)
-        if not division:
-            return False
-        if division.abbreviation == "ВК":
-            return True
-        if division.positions:
-            for position in division.positions:
-                if position.name == user.position and position.privilege.value >= 3:
-                    return True
-
-    return False
-
-
-async def _apply_role_discord(interaction: Interaction[ClientT], request: RoleRequest, user_discord: discord.Member):
-    """Выдаёт роли и меняет ник в Discord в зависимости от типа роли."""
-    if request.role_type in (RoleType.ARMY, RoleType.KMB):
-        user = await User.find_one(User.discord_id == request.user) or User(discord_id=request.user)
-        user.rank = 0
-        user.division = 1 if request.role_type == RoleType.ARMY else 8
-        user.first_name, user.last_name = request.data.full_name.split(" ", 1)
-        user.static = request.data.static_id
-        user.invited_at = datetime.datetime.now()
-        user.pre_inited = True
-        await user.save()
-
-        extra_role = config.RoleId.MILITARY_ACADEMY.value if request.role_type == RoleType.ARMY else config.RoleId.KMB.value
-        role_ids = [config.RoleId.MILITARY.value, config.RANK_ROLES[config.RANKS[0]], extra_role]
-        roles_to_add = [interaction.guild.get_role(rid) for rid in role_ids]
-        new_roles = [r for r in user_discord.roles if r.id not in role_ids] + [r for r in roles_to_add if r]
-
-        try:
-            await user_discord.edit(
-                nick=user.discord_nick,
-                roles=new_roles,
-                reason=f"Одобрено получение роли {ROLE_DISPLAY_NAMES[request.role_type]} by {interaction.user.id}",
-            )
-        except discord.Forbidden:
-            try:
-                msg = "⚠️ Данные сохранены, но не удалось обновить Discord-профиль (не хватает прав или иерархия ролей)."
-                if interaction.response.is_done():
-                    await interaction.followup.send(msg, ephemeral=True)
-                else:
-                    await interaction.response.send_message(msg, ephemeral=True)
-            except discord.HTTPException:
-                pass
-        except Exception as e:
-            logger.error(f"Error recruitment syncing user {user_discord.id}: {e}")
-
-        await audit_logger.log_action(action=AuditAction.INVITED, initiator=interaction.user, target=user.discord_id)
-
-    elif request.role_type in (RoleType.SUPPLY_ACCESS, RoleType.GOV_EMPLOYEE):
-        role_id = config.RoleId.SUPPLY_ACCESS.value if request.role_type == RoleType.SUPPLY_ACCESS else config.RoleId.GOV_EMPLOYEE.value
-        role = interaction.guild.get_role(role_id)
-        new_roles = list(user_discord.roles)
-        if role:
-            new_roles.append(role)
-        new_nick = f"{request.extended_data.faction} | {request.extended_data.full_name}"[:32]
-        await user_discord.edit(
-            nick=new_nick,
-            roles=new_roles,
-            reason=f"Одобрено роль {ROLE_DISPLAY_NAMES[request.role_type]} by {interaction.user.id}",
-        )
 
 
 class RoleManagementButton(
@@ -254,63 +108,26 @@ class RoleManagementButton(
     async def from_custom_id(cls, interaction: discord.Interaction, item: discord.ui.Button, match: re.Match[str]):
         return cls(match.group("action"), int(match.group("id")))
 
-    async def callback(self, interaction: Interaction[ClientT]) -> Any:
-        await interaction.response.send_message("⏳ Выполняются действия...", ephemeral=True)
+    async def callback(self, interaction: discord.Interaction):
+        try:
+            officer = await AuthorizationService.require_active_soldier(interaction)
+            await safe_respond(interaction, random_loading_message())
 
-        from utils.mongo_lock import try_lock
+            if self.action == "approve":
+                result = await RoleService.approve_role(interaction, self.request_id, officer)
+            else:
+                result = await RoleService.reject_role(interaction, self.request_id, officer)
 
-        if not await try_lock(RoleRequest, self.request_id, "status", "PROCESSING", "PENDING"):
-            await interaction.edit_original_response(content=f"❌ Заявка #{self.request_id} не найдена или уже обработана.")
-            return
-
-        request = await RoleRequest.find_one(RoleRequest.id == self.request_id)
-
-        if interaction.user.id == request.user:
-            await RoleRequest.get_pymongo_collection().update_one(
-                {"_id": self.request_id}, {"$set": {"status": "PENDING"}}
+            await safe_edit_message(
+                message=interaction.message,
+                content=build_mentions([result.request.user, interaction.user.id]),
+                embed=result.embed,
+                view=result.view,
             )
-            await interaction.edit_original_response(content="❌ Вы не можете рассматривать собственную заявку.")
-            return
+            await safe_respond(interaction, result.message)
 
-        if not await check_approve_permission(interaction, request):
-            await RoleRequest.get_pymongo_collection().update_one(
-                {"_id": self.request_id}, {"$set": {"status": "PENDING"}}
-            )
-            required = ROLE_REQUIRED_RANKS.get(request.role_type, "Полковник")
-            await interaction.edit_original_response(content=f"❌ У вас нет прав. Требуется звание: {required}+")
-            return
-
-        if self.action == "approve":
-            request.status = "APPROVED"
-            await request.save()
-
-            await interaction.message.edit(
-                content=f"-# ||<@{request.user}> {interaction.user.mention}||",
-                embed=await request.to_embed(),
-                view=indicator_view(f"Одобрил {interaction.user.display_name}", emoji="👍"),
-            )
-
-            user_discord = await interaction.client.getch_member(request.user)
-            if user_discord:
-                await _apply_role_discord(interaction, request, user_discord)
-
-            await notify_role_approved(interaction.client, request.user,
-                                       ROLE_DISPLAY_NAMES.get(request.role_type, "Роль"))
-            await interaction.edit_original_response(content="✅ Заявка одобрена.")
-
-        else:
-            request.status = "REJECTED"
-            await request.save()
-
-            await interaction.message.edit(
-                content=f"-# ||<@{request.user}> {interaction.user.mention}||",
-                embed=await request.to_embed(),
-                view=indicator_view(f"Отклонил {interaction.user.display_name}", emoji="👎"),
-            )
-
-            await notify_role_rejected(interaction.client, request.user,
-                                       ROLE_DISPLAY_NAMES.get(request.role_type, "Роль"))
-            await interaction.edit_original_response(content="✅ Заявка отклонена.")
+        except ServiceError as error:
+            await safe_respond(interaction, error.message)
 
 
 class RoleManagementView(discord.ui.View):

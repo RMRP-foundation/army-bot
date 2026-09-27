@@ -3,13 +3,14 @@ from typing import TYPE_CHECKING
 
 import discord
 
-import config
+from core import config
+from utils.helpers import build_mentions
 
 if TYPE_CHECKING:
     from bot import Bot
 from database import divisions
 from database.models import User
-from utils.user_data import format_game_id, display_rank
+from utils.user_data import format_static, format_rank
 
 
 class AuditAction(StrEnum):
@@ -72,12 +73,14 @@ class AuditLogger:
         display_info: User | None = None,
         additional_info: dict[str, str] | None = None,
     ):
-        mentions = set()
+        mention_ids: list[int] = []
         if isinstance(target, (discord.Member, discord.User)):
-            mentions.add(target.id)
+            mention_ids.append(target.id)
         elif isinstance(target, int):
-            mentions.add(target)
-        mentions.add(initiator.id)
+            mention_ids.append(target)
+        mention_ids.append(initiator.id)
+
+        mention_text = build_mentions(mention_ids)
 
         initiator_info = await User.find_one(User.discord_id == initiator.id)
 
@@ -95,13 +98,14 @@ class AuditLogger:
             timestamp=discord.utils.utcnow(),
         )
         author_name = (
-            f"Составитель: {initiator_info.full_name} | "
-            f"{format_game_id(initiator_info.static)}"
+            f"Составитель: {initiator_info.full_name if initiator_info else initiator.display_name} | "
+            f"{format_static(initiator_info.static)}"
         )
+
         embed.set_author(name=author_name)
         embed.add_field(
             name="Военнослужащий",
-            value=f"{target_info.full_name} `{format_game_id(target_info.static)}`"
+            value=f"{target_info.full_name} `{format_static(target_info.static)}`"
             if target_info
             else str(target),
             inline=False,
@@ -109,7 +113,7 @@ class AuditLogger:
         if target_info and target_info.rank is not None:
             embed.add_field(
                 name="Звание",
-                value=display_rank(target_info.rank),
+                value=format_rank(target_info.rank),
                 inline=False,
             )
         if target_info and target_info.division is not None:
@@ -121,11 +125,6 @@ class AuditLogger:
         if target_info and target_info.position is not None:
             embed.add_field(name="Должность", value=target_info.position, inline=False)
         embed.set_footer(text="Записано в журнал аудита")
-        mention_text = (
-            ("-# ||" + " ".join(f"<@{uid}>" for uid in mentions) + "||")
-            if mentions
-            else None
-        )
 
         for key, value in (additional_info or {}).items():
             embed.add_field(name=key, value=value, inline=False)

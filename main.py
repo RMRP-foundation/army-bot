@@ -3,8 +3,8 @@ from pathlib import Path
 
 import discord
 
-import config
 from bot import Bot
+from core.config import TOKEN
 
 logging.basicConfig(
     level=logging.INFO,
@@ -23,12 +23,12 @@ logging.getLogger("discord.client").addFilter(
 )
 
 def main():
-    token = config.TOKEN
+    token = TOKEN
 
     intents = discord.Intents.default()
     intents.members = True          # Для выдачи ролей и ников
     intents.message_content = True  # Для работы префиксных команд (!refresh_...)
-    bot = Bot(command_prefix="!", intents=intents, help_command=None, owner_id=531744307103662080)
+    bot = Bot(command_prefix="!", intents=intents, help_command=None)
 
     bot.run(token)
 

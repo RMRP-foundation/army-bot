@@ -2,19 +2,23 @@ import logging
 import os
 
 import discord
+import sentry_sdk
 from discord.ext import commands
 from pymongo import UpdateOne
 
-import config
+from core.config import GUILD_ID, SENTRY_DSN
 from database import divisions
 from database.connection import establish_db_connection
-from database.models import User, TimeoffRequest, RoleRequest, PromotionRequest
+from database.models import User, ReinstatementRequest
 from error_handling import _custom_view_on_error, on_tree_error, on_command_error
 from ui.views import load_buttons
-from utils.audit import audit_logger
+from services.audit import audit_logger
 from utils.roles import get_rank_from_roles
 
 logger = logging.getLogger(__name__)
+
+sentry_sdk.init(dsn=SENTRY_DSN, traces_sample_rate=0, send_default_pii=False)
+
 
 discord.ui.View.on_error = _custom_view_on_error
 discord.ui.LayoutView.on_error = _custom_view_on_error
@@ -27,7 +31,7 @@ class Bot(commands.Bot):
     async def _sync_users(self):
         inited_ids = set(await User.distinct("discord_id", {"pre_inited": True}))
 
-        guild = self.get_guild(config.GUILD_ID)
+        guild = self.get_guild(GUILD_ID)
 
         operations = []
 
@@ -57,54 +61,15 @@ class Bot(commands.Bot):
             logger.info(f"Synchronized {len(operations)} users from guild members")
 
     async def run_migrations(self):
-        await RoleRequest.get_pymongo_collection().update_many(
-            {"checked": True, "status": {"$exists": False}},
-            [{"$set": {"status": {"$cond": ["$approved", "APPROVED", "REJECTED"]}}}]
-        )
-        await TimeoffRequest.get_pymongo_collection().update_many(
-            {"checked": True, "status": {"$exists": False}},
-            [{"$set": {"status": {"$cond": ["$approved", "APPROVED", "REJECTED"]}}}]
-        )
-
-    async def reset_processing(self):
-        """Сбрасывает PROCESSING -> PENDING при каждом старте."""
-        from database.models import DismissalRequest, SSOPatrolRequest, LogisticsRequest, LeaveRequest, TransferRequest
-        simple_models = [
-            DismissalRequest, SSOPatrolRequest, LogisticsRequest, RoleRequest, TimeoffRequest
-        ]
-        for model in simple_models:
-            await model.get_pymongo_collection().update_many(
-                {"status": "PROCESSING"},
-                {"$set": {"status": "PENDING"}}
-            )
-
-        for model in (PromotionRequest, LeaveRequest):
-            await model.get_pymongo_collection().update_many(
-                {"status": "PROCESSING", "reviewer_id": {"$ne": None}},
-                {"$set": {"status": "APPROVED"}}
-            )
-            await model.get_pymongo_collection().update_many(
-                {"status": "PROCESSING"},
-                {"$set": {"status": "PENDING"}}
-            )
-
-
-        div_with_positions = [d.division_id for d in divisions.divisions if d.positions]
-
-        await TransferRequest.get_pymongo_collection().update_many(
-            {
-                "status": "PROCESSING",
-                "$or": [
-                    {"old_reviewer_id": {"$ne": None}},
-                    {"old_division_id": {"$nin": div_with_positions}}
+        await ReinstatementRequest.get_pymongo_collection().update_many(
+            {"status": {"$exists": False}},
+            [{"$set": {"status": {
+                "$cond": [
+                    "$checked",
+                    {"$cond": ["$approved", "APPROVED", "REJECTED"]},
+                    {"$cond": ["$approved", "ATTESTATION", "PENDING"]}
                 ]
-            },
-            {"$set": {"status": "NEW_DIVISION_REVIEW"}}
-        )
-
-        await TransferRequest.get_pymongo_collection().update_many(
-            {"status": "PROCESSING"},
-            {"$set": {"status": "OLD_DIVISION_REVIEW"}}
+            }}}]
         )
 
     async def on_ready(self):
@@ -113,7 +78,6 @@ class Bot(commands.Bot):
         logger.info("------")
         await self._sync_users()
         await self.run_migrations()
-        await self.reset_processing()
         from cogs.leave import restore_leave_timers
         await restore_leave_timers(self)
 
@@ -133,10 +97,10 @@ class Bot(commands.Bot):
 
         self.tree.on_error = on_tree_error
 
-        guild = discord.Object(id=config.GUILD_ID)
+        guild = discord.Object(id=GUILD_ID)
         self.tree.copy_global_to(guild=guild)
         await self.tree.sync(guild=guild)
-        logger.info(f"Slash commands synced to guild {config.GUILD_ID}")
+        logger.info(f"Slash commands synced to guild {GUILD_ID}")
 
     async def getch_user(self, discord_id: int):
         if user := self.get_user(discord_id):
@@ -144,7 +108,7 @@ class Bot(commands.Bot):
         return await self.fetch_user(discord_id)
 
     async def getch_member(self, discord_id: int):
-        guild = self.get_guild(config.GUILD_ID)
+        guild = self.get_guild(GUILD_ID)
         if member := guild.get_member(discord_id):
             return member
 

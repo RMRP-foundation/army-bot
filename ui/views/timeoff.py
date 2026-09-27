@@ -1,77 +1,23 @@
-import datetime
 import re
-from typing import Any
 
 import discord
-from beanie.odm.operators.find.comparison import In
-from discord import Interaction, InteractionResponse
-from discord._types import ClientT
 
-import config
-from database.models import TimeoffRequest, User
-from texts import timeoff_title, timeoff_submission, timeoff_description
-from ui.views.indicators import indicator_view
-from utils.exceptions import StaticInputRequired
-from utils.notifications import notify_timeoff_approved, notify_timeoff_rejected
-from utils.user_data import get_initiator, get_user_defaults
-
-MSK = datetime.timezone(datetime.timedelta(hours=3))
-
-def _msk_day_start_utc() -> datetime.datetime:
-    """Начало текущих суток по МСК, возвращённое в UTC для сравнения с БД."""
-    now_utc = discord.utils.utcnow()
-    today_msk = now_utc.astimezone(MSK).replace(hour=0, minute=0, second=0, microsecond=0)
-    return today_msk.astimezone(datetime.timezone.utc)
-
-async def _check_can_apply(interaction: discord.Interaction) -> bool:
-    cutoff = _msk_day_start_utc()
-
-    opened_request = await TimeoffRequest.find_one(
-        TimeoffRequest.user_id == interaction.user.id,
-        In(TimeoffRequest.status, ["PENDING", "PROCESSING"]),
-        TimeoffRequest.sent_at >= cutoff,
-    )
-    if opened_request is not None:
-        await interaction.response.send_message(
-            f"### У вас уже есть открытое заявление #{opened_request.id} на рассмотрении.\nОжидайте его рассмотрения.",
-            ephemeral=True,
-        )
-        return False
-
-    user = await get_initiator(interaction)
-    if not user or user.rank is None:
-        await interaction.response.send_message(
-            "### Вы не состоите на службе и не можете подать заявление на отгул.",
-            ephemeral=True,
-        )
-        return False
-    if user.rank < config.RankIndex.JUNIOR_SERGEANT:
-        await interaction.response.send_message(
-            "### Вы не можете подать заявление на отгул. Требуется звание: Младший сержант+",
-            ephemeral=True,
-        )
-        return False
-
-    approved_request = await TimeoffRequest.find_one(
-        TimeoffRequest.user_id == interaction.user.id,
-        TimeoffRequest.status == "APPROVED",
-        TimeoffRequest.reviewed_at >= cutoff,
-    )
-    if approved_request:
-        await interaction.response.send_message(
-            "### Вы уже подавали заявление на отгул сегодня.\nПовторная подача возможна только на следующий день.",
-            ephemeral=True,
-        )
-        return False
-    return True
+from core.exceptions import ServiceError
+from services.authorization import AuthorizationService
+from services.timeoff import TimeoffService
+import texts
+from ui.modals.timeoff import TimeoffRequestModal
+from utils.helpers import safe_respond, build_mentions, safe_edit_message, random_loading_message, safe_delete_message
 
 
-async def timeoff_button_callback(interaction: discord.Interaction):
-    if not await _check_can_apply(interaction):
-        return
-    _, user_name, static_id = await get_user_defaults(interaction)
-    from ui.modals.timeoff import TimeoffRequestModal
-    await interaction.response.send_modal(TimeoffRequestModal(user_name=user_name))
+async def _timeoff_button_callback(interaction: discord.Interaction) -> None:
+    """Проверяет возможность подачи заявления на отгул и открывает модалку."""
+    try:
+        user_db = await AuthorizationService.require_active_soldier(interaction)
+        await TimeoffService.validate_can_apply(user_db)
+        await interaction.response.send_modal(TimeoffRequestModal(user_db))
+    except ServiceError as error:
+        await safe_respond(interaction, error.message)
 
 
 class TimeoffApplyView(discord.ui.LayoutView):
@@ -79,9 +25,9 @@ class TimeoffApplyView(discord.ui.LayoutView):
         super().__init__(timeout=None)
 
     container = discord.ui.Container()
-    container.add_item(discord.ui.TextDisplay(timeoff_title))
-    container.add_item(discord.ui.TextDisplay(timeoff_submission))
-    container.add_item(discord.ui.TextDisplay(timeoff_description))
+    container.add_item(discord.ui.TextDisplay(texts.timeoff_title))
+    container.add_item(discord.ui.TextDisplay(texts.timeoff_submission))
+    container.add_item(discord.ui.TextDisplay(texts.timeoff_description))
     container.add_item(discord.ui.Separator(visible=True))
 
     timeoff_button = discord.ui.Button(
@@ -90,33 +36,11 @@ class TimeoffApplyView(discord.ui.LayoutView):
         style=discord.ButtonStyle.primary,
         custom_id="timeoff_apply_button",
     )
-    timeoff_button.callback = timeoff_button_callback
+    timeoff_button.callback = _timeoff_button_callback
 
     action_row = discord.ui.ActionRow()
     action_row.add_item(timeoff_button)
     container.add_item(action_row)
-
-
-async def check_approve_permission(interaction: Interaction[ClientT], request: TimeoffRequest) -> tuple[bool, str]:
-    try:
-        approver = await get_initiator(interaction)
-    except StaticInputRequired:
-        return False, ""
-
-    if not approver:
-        return False, "Вы не найдены в базе данных."
-
-    if (approver.rank or 0) < config.RankIndex.MAJOR:
-        return False, "Для рассмотрения заявок на отгул требуется звание Майор и выше."
-
-    requester = await User.find_one(User.discord_id == request.user_id)
-    if not requester:
-        return False, "Заявитель не найден в базе данных."
-
-    if (approver.rank or 0) <= (requester.rank or 0):
-        return False, "Вы не можете рассматривать заявку человека, чье звание равно вашему или выше."
-
-    return True, ""
 
 
 class TimeoffManagementButton(
@@ -143,41 +67,24 @@ class TimeoffManagementButton(
     async def from_custom_id(cls, interaction: discord.Interaction, item: discord.ui.Button, match: re.Match[str]):
         return cls(match.group("action"), int(match.group("id")))
 
-    async def callback(self, interaction: Interaction[ClientT]) -> Any:
-        from utils.mongo_lock import try_lock
+    async def callback(self, interaction: discord.Interaction):
+        try:
+            officer = await AuthorizationService.require_active_soldier(interaction)
+            await safe_respond(interaction, random_loading_message())
 
-        if not await try_lock(TimeoffRequest, self.request_id, "status", "PROCESSING", "PENDING"):
-            await interaction.response.send_message("❌ Заявка не найдена или уже обработана.", ephemeral=True)
-            return
+            if self.action == "approve":
+                result = await TimeoffService.approve_timeoff(interaction, self.request_id, officer)
+            else:
+                result = await TimeoffService.reject_timeoff(interaction, self.request_id, officer)
 
-        request = await TimeoffRequest.find_one(TimeoffRequest.id == self.request_id)
-
-        is_allowed, error_msg = await check_approve_permission(interaction, request)
-        if not is_allowed:
-            await TimeoffRequest.get_pymongo_collection().update_one(
-                {"_id": self.request_id}, {"$set": {"status": "PENDING"}}
+            await safe_edit_message(
+                message=interaction.message, content=build_mentions(result.mention_ids), embed=result.embed,
+                view=result.view,
             )
-            if error_msg:
-                await interaction.response.send_message(error_msg, ephemeral=True)
-            return
+            await safe_respond(interaction, result.message)
 
-        request.status = "APPROVED" if self.action == "approve" else "REJECTED"
-        request.reviewed_at = discord.utils.utcnow()
-        await request.save()
-
-        assert isinstance(interaction.response, InteractionResponse)
-        prefix = "Одобрил" if self.action == "approve" else "Отклонил"
-        emoji = "👍" if self.action == "approve" else "👎"
-        await interaction.response.edit_message(
-            content=f"-# ||<@{request.user_id}> {interaction.user.mention}||",
-            embed=await request.to_embed(),
-            view=indicator_view(f"{prefix} {interaction.user.display_name}", emoji=emoji),
-        )
-
-        if self.action == "approve":
-            await notify_timeoff_approved(interaction.client, request.user_id)
-        else:
-            await notify_timeoff_rejected(interaction.client, request.user_id)
+        except ServiceError as error:
+            await safe_respond(interaction, error.message)
 
 
 class TimeoffCancelButton(
@@ -198,20 +105,12 @@ class TimeoffCancelButton(
         return cls(int(match.group("id")))
 
     async def callback(self, interaction: discord.Interaction):
-        req = await TimeoffRequest.find_one(
-            TimeoffRequest.id == self.request_id,
-            TimeoffRequest.user_id == interaction.user.id,
-        )
-        if not req or req.status != "PENDING":
-            await interaction.response.send_message("❌ Заявка не найдена или уже обработана.", ephemeral=True)
-            return
-
-        req.status = "REJECTED"
-        req.reviewed_at = discord.utils.utcnow()
-        await req.save()
-
-        await interaction.response.send_message(content="✅ Ваша заявка была отменена.", ephemeral=True)
-        await interaction.message.delete()
+        try:
+            await TimeoffService.cancel_timeoff(self.request_id, interaction.user.id)
+            await safe_delete_message(interaction.message)
+            await safe_respond(interaction, "✅ Ваша заявка на отгул была отменена.")
+        except ServiceError as error:
+            await safe_respond(interaction, error.message)
 
 
 class TimeoffManagementView(discord.ui.View):
