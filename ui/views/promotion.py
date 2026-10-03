@@ -63,6 +63,7 @@ class PromotionManagementButton(
         modal.add_item(reason_input)
 
         async def on_submit(modal_inter: discord.Interaction):
+            await modal_inter.response.defer()
             try:
                 result = await PromotionService.reject_promotion(
                     interaction=modal_inter, request_id=self.report_id, reviewer=officer,
@@ -72,7 +73,7 @@ class PromotionManagementButton(
                 await safe_respond(modal_inter, error.message)
                 return
 
-            await modal_inter.response.edit_message(
+            await modal_inter.edit_original_response(
                 content=build_mentions(result.mention_ids), embed=result.embed, view=result.view,
             )
 
