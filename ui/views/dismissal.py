@@ -6,6 +6,7 @@ from core.exceptions import ServiceError
 from database.models import DismissalType, User, DismissalRequest
 from services.authorization import AuthorizationService
 from services.dismissal import DismissalService
+from ui.embeds.dismissal import dismissal_embed
 from ui.modals.dismissal import DismissalModal
 from utils.helpers import safe_respond, build_mentions, safe_edit_message, safe_delete_message
 from utils.permissions import is_officer, has_disciplinary_restrictions, is_higher_rank
@@ -141,6 +142,14 @@ class DismissalManagementButton(
             await safe_respond(interaction, "✅ Рапорт одобрен, сотрудник уволен.")
 
         except ServiceError as error:
+            req = await DismissalRequest.find_one(DismissalRequest.id == self.request_id)
+            if req and req.status != "PENDING":
+                await safe_edit_message(
+                    message = interaction.message,
+                    content = build_mentions([req.user_id, interaction.user.id]),
+                    embed = dismissal_embed(req),
+                    view = None,
+                )
             await safe_respond(interaction, error.message)
 
 
