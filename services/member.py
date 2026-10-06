@@ -69,7 +69,7 @@ class MemberService:
             bool: True, если синхронизация прошла успешно (или изменений не требовалось),
                   False при ошибках прав доступа или сбоях API.
         """
-        if not member:
+        if not isinstance(member, discord.Member):
             return False
 
         try:
