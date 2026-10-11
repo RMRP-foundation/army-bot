@@ -46,7 +46,7 @@ class Blacklist(commands.Cog):
     async def blacklist(
         self,
         interaction: discord.Interaction,
-        user: discord.Member,
+        user: discord.User,
         days: app_commands.Range[int, -1, 3650],
         reason: str,
         evidence: str,
@@ -121,7 +121,7 @@ class Blacklist(commands.Cog):
     async def unblacklist(
         self,
         interaction: discord.Interaction,
-        user: discord.Member,
+        user: discord.User,
         reason: str,
     ):
         try:
