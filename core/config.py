@@ -268,7 +268,7 @@ PROMOTION_RULES: dict[int, DivisionRule] = {
     DivisionId.ROIO: DivisionRule(
         review_rank=RankIndex.MAJOR,
         promote_rank=RankIndex.MAJOR,
-        review_positions=("Командир отделения",),
+        review_positions=("Командир отделения", "Старший сотрудник"),
     ),
     DivisionId.SSO: DivisionRule(
         review_rank=RankIndex.MAJOR,
