@@ -1,4 +1,5 @@
 import datetime
+import math
 
 import discord
 from discord import app_commands
@@ -27,12 +28,94 @@ def can_manage_blacklist(initiator: User, target: User) -> bool:
     return True
 
 
-class Blacklist(commands.Cog):
+class BlacklistBrowser(discord.ui.LayoutView):
+    def __init__(self, users: list[User], per_page: int = 10):
+        super().__init__(timeout=600)
+        self.users = users
+        self.per_page = per_page
+        self.current_page = 0
+        self.total_pages = math.ceil(len(users) / per_page) or 1
+        self.render_page()
+
+    @staticmethod
+    def _format_entry(i: int, u: User) -> str:
+        bl = u.blacklist
+        until = (
+            f"до {discord.utils.format_dt(bl.ends_at, style='d')}"
+            if bl.ends_at
+            else "бессрочно"
+        )
+        reason = bl.reason.replace("\n", " ")[:100]
+        return (
+            f"{i}. `{format_static(u.static)}` "
+            f"<@{u.discord_id}> "
+            f"❯ {u.full_name or 'Без имени'} "
+            f"❯ {until}\n"
+            f"-# {reason}"
+        )
+
+    def render_page(self):
+        self.clear_items()
+
+        start = self.current_page * self.per_page
+        end = start + self.per_page
+        entries_text = "\n".join(
+            self._format_entry(i, u)
+            for i, u in enumerate(self.users[start:end], start=start + 1)
+        )
+
+        container = discord.ui.Container(accent_color=discord.Color.dark_red())
+        container.add_item(
+            discord.ui.TextDisplay(f"## 📋 Черный список: {len(self.users)}")
+        )
+        container.add_item(discord.ui.Separator())
+        container.add_item(discord.ui.TextDisplay(entries_text))
+        container.add_item(
+            discord.ui.TextDisplay(f"Страница: `{self.current_page + 1}` из `{self.total_pages}`")
+        )
+        container.add_item(discord.ui.Separator())
+
+        action_row = discord.ui.ActionRow()
+
+        btn_prev = discord.ui.Button(
+            emoji="⬅️",
+            style=discord.ButtonStyle.gray,
+            disabled=(self.current_page == 0),
+        )
+        btn_prev.callback = self.on_prev
+        action_row.add_item(btn_prev)
+
+        btn_next = discord.ui.Button(
+            emoji="➡️",
+            style=discord.ButtonStyle.gray,
+            disabled=(self.current_page >= self.total_pages - 1),
+        )
+        btn_next.callback = self.on_next
+        action_row.add_item(btn_next)
+
+        container.add_item(action_row)
+        self.add_item(container)
+
+    async def on_prev(self, interaction: discord.Interaction):
+        if self.current_page > 0:
+            self.current_page -= 1
+            self.render_page()
+            await interaction.response.edit_message(view=self)
+
+    async def on_next(self, interaction: discord.Interaction):
+        if self.current_page < self.total_pages - 1:
+            self.current_page += 1
+            self.render_page()
+            await interaction.response.edit_message(view=self)
+
+
+class Blacklist(commands.GroupCog, group_name="blacklist", group_description="Черный список"):
     def __init__(self, bot: Bot):
         self.bot = bot
+        super().__init__()
 
     @app_commands.command(
-        name="blacklist", description="Добавить военнослужащего в общий черный список"
+        name="add", description="Добавить военнослужащего в общий черный список"
     )
     @app_commands.rename(
         user="военнослужащий", days="дни", reason="причина", evidence="доказательства"
@@ -43,7 +126,7 @@ class Blacklist(commands.Cog):
         reason="Причина добавления в черный список",
         evidence="Доказательства (ссылки на скриншоты, сообщения и т.д.)",
     )
-    async def blacklist(
+    async def add(
         self,
         interaction: discord.Interaction,
         user: discord.User,
@@ -111,14 +194,14 @@ class Blacklist(commands.Cog):
             await channel.send(content=mention_text, embed=embed)
 
     @app_commands.command(
-        name="unblacklist", description="Снять военнослужащего с черного списка"
+        name="remove", description="Снять военнослужащего с черного списка"
     )
     @app_commands.rename(user="военнослужащий", reason="причина")
     @app_commands.describe(
         user="Военнослужащий для снятия с черного списка",
         reason="Причина снятия с черного списка",
     )
-    async def unblacklist(
+    async def remove(
         self,
         interaction: discord.Interaction,
         user: discord.User,
@@ -179,6 +262,32 @@ class Blacklist(commands.Cog):
         channel = self.bot.get_channel(channel_id)
         if channel:
             await channel.send(content=mention_text, embed=embed)
+
+    @app_commands.command(name="list", description="Показать активный черный список")
+    async def list_(self, interaction: discord.Interaction):
+        users = await User.find(
+            {
+                "blacklist": {"$ne": None},
+                "$or": [
+                    {"blacklist.ends_at": None},
+                    {"blacklist.ends_at": {"$gt": discord.utils.utcnow()}},
+                ],
+            }
+        ).to_list()
+
+        if not users:
+            container = discord.ui.Container()
+            container.add_item(
+                discord.ui.TextDisplay("## 📋 Черный список: 0\n\nПусто.")
+            )
+            view = discord.ui.LayoutView()
+            view.add_item(container)
+            await interaction.response.send_message(view=view, ephemeral=True)
+            return
+
+        await interaction.response.send_message(
+            view=BlacklistBrowser(users), ephemeral=True
+        )
 
 
 async def setup(bot: Bot):
