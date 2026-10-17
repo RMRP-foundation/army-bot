@@ -272,6 +272,12 @@ class PromotionService:
             )
             raise ServiceError("❌ Военнослужащий больше не состоит на службе.")
 
+        if target_user_db.rank != req.current_rank:
+            raise ServiceError(
+                f"❌ Рапорт неактуален: звание бойца изменилось на **{config.RANKS[target_user_db.rank]}** "
+                f"(рапорт подавался со звания **{config.RANKS[req.current_rank]}**)."
+            )
+
         updated_dict = await atomic_status_transition(
             PromotionRequest.get_pymongo_collection(), request_id, "APPROVED", "PROMOTED",
             extra_fields={"promoted_by": interaction.user.id},
