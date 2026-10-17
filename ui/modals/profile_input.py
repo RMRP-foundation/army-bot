@@ -2,8 +2,9 @@ import discord
 
 from core.exceptions import ServiceError
 from services.member import MemberService
-from ui.modals.labels import name_input, clean_static, clean_name, static_label
+from ui.modals.labels import name_input, static_label
 from utils.helpers import safe_respond
+from utils.user_data import clean_static, clean_name
 
 
 class StaticInputModal(discord.ui.Modal, title="Введите ваш статик"):
