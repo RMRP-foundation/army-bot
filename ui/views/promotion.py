@@ -63,7 +63,7 @@ class PromotionManagementButton(
         modal.add_item(reason_input)
 
         async def on_submit(modal_inter: discord.Interaction):
-            await modal_inter.response.defer()
+            await modal_inter.response.defer(ephemeral=True)
             try:
                 result = await PromotionService.reject_promotion(
                     interaction=modal_inter, request_id=self.report_id, reviewer=officer,
