@@ -1,31 +1,25 @@
+import discord
+from discord import app_commands
 from discord.ext import commands
 
-from database.models import User
-from utils.permissions import is_service
+from bot import Bot
+from ui.views.admin import AdminPanel
+from utils.helpers import safe_respond
+from utils.permissions import is_service_account
 
 
 class Admin(commands.Cog):
-    def __init__(self, bot):
+    def __init__(self, bot: Bot):
         self.bot = bot
 
-    @commands.command(name="reset_division")
-    @is_service()
-    async def reset_division_cmd(self, ctx, discord_id: int):
-        user = await User.get_by_discord_id(discord_id)
-        if user:
-            user.division = None
-            user.position = None
-            await user.save()
-            await ctx.message.add_reaction("✅")
-
-    @commands.command(name="resync")
-    @is_service()
-    async def resync_command(self, ctx: commands.Context):
-        await ctx.message.add_reaction("⏰")
-        self.bot.tree.copy_global_to(guild=ctx.guild)
-        await self.bot.tree.sync(guild=ctx.guild)
-        await ctx.message.add_reaction("✅")
+    @app_commands.command(name="admin", description="Сервисная панель управления ботом")
+    @app_commands.guild_only()
+    async def admin(self, interaction: discord.Interaction):
+        if not is_service_account(interaction.user.id):
+            await safe_respond(interaction, "⛔ Нет доступа")
+            return
+        await interaction.response.send_message(view=AdminPanel(self.bot), ephemeral=True)
 
 
-async def setup(bot):
+async def setup(bot: Bot):
     await bot.add_cog(Admin(bot))

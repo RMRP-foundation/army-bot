@@ -139,8 +139,8 @@ class SupplyService:
         request.message_id = msg_id
         await request.save()
 
-        from cogs.supplies import update_bottom_message
-        await update_bottom_message(interaction.client)
+        from services.bottom_messages import request_refresh
+        await request_refresh(interaction.client, config.CHANNELS["storage_requests"])
 
     @classmethod
     async def submit_supply(
@@ -248,8 +248,8 @@ class SupplyService:
         except discord.HTTPException as error:
             logger.error(f"Failed to send storage audit log for request #{request.id}: {error}")
 
-        from cogs.supplies_audit import update_bottom_message as update_audit_bottom
-        await update_audit_bottom(interaction.client)
+        from services.bottom_messages import request_refresh
+        await request_refresh(interaction.client, config.CHANNELS["storage_audit"])
 
     @classmethod
     async def reject_supply(cls, interaction: discord.Interaction, request_id: int, officer: User) -> SupplyActionResult:

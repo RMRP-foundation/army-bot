@@ -46,8 +46,8 @@ class SupplyAuditService:
             logger.error(f"Failed to send supplies audit entry: {error}", exc_info=True)
             raise ServiceError("❌ Не удалось отправить отчёт. Попробуйте ещё раз.")
 
-        from cogs.supplies_audit import update_bottom_message
-        await update_bottom_message(interaction.client)
+        from services.bottom_messages import request_refresh
+        await request_refresh(interaction.client, config.CHANNELS["storage_audit"])
 
     @classmethod
     async def submit_give_supply(cls, interaction: discord.Interaction, user_db: User, recipient_id: int, items_raw: str, reason: str) -> None:

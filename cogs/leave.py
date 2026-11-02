@@ -2,7 +2,6 @@ import asyncio
 import logging
 
 import discord
-from discord.ext import commands
 
 from bot import Bot
 from core import config
@@ -10,20 +9,14 @@ from database.models import LeaveRequest, LeaveType, User
 from services.member import MemberService
 from services.notifications import notify_leave_expired
 from ui.embeds.leave import leave_embed
-from ui.views.leave import ICLeaveApplyView, OOCLeaveApplyView
-from utils.bottom_message import update_bottom_message as _update_bottom_message
 from utils.helpers import safe_edit_message, build_mentions
 from utils.mongo_atomic import atomic_status_transition
-from utils.permissions import is_service
 
 logger = logging.getLogger(__name__)
 
 _leave_timers: dict[int, asyncio.Task] = {}
 _leave_activation_timers: dict[int, asyncio.Task] = {}
 _timers_restored = False
-
-ic_channel_id = config.CHANNELS["ic_leave"]
-ooc_channel_id = config.CHANNELS["ooc_leave"]
 
 
 async def _activate_leave(bot: Bot, request_id: int):
@@ -151,21 +144,18 @@ async def schedule_leave_expiry(bot: Bot, request: LeaveRequest):
 
 
 def cancel_leave_timer(request_id: int):
-    """Отменяет таймер завершения отпуска."""
     task = _leave_timers.pop(request_id, None)
     if task and not task.done():
         task.cancel()
 
 
 def cancel_activation_timer(request_id: int):
-    """Отменяет таймер активации отпуска."""
     task = _leave_activation_timers.pop(request_id, None)
     if task and not task.done():
         task.cancel()
 
 
 async def restore_leave_timers(bot: Bot):
-    """Восстанавливает таймеры всех активных отпусков при запуске бота."""
     global _timers_restored
     if _timers_restored:
         return
@@ -194,26 +184,5 @@ async def restore_leave_timers(bot: Bot):
     _timers_restored = True
 
 
-async def update_bottom_message(bot: Bot, leave_type: LeaveType):
-    """Обновляет сообщение для подачи заявки в зависимости от типа отпуска."""
-    if leave_type == LeaveType.IC:
-        await _update_bottom_message(bot, ic_channel_id, ICLeaveApplyView())
-    else:
-        await _update_bottom_message(bot, ooc_channel_id, OOCLeaveApplyView())
-
-
-class Leave(commands.Cog):
-    def __init__(self, bot: Bot):
-        self.bot = bot
-
-    @commands.command(name="refresh_leave")
-    @is_service()
-    async def update_command(self, ctx: commands.Context):
-        if ctx.channel.id == ic_channel_id:
-            await update_bottom_message(self.bot, LeaveType.IC)
-        elif ctx.channel.id == ooc_channel_id:
-            await update_bottom_message(self.bot, LeaveType.OOC)
-
-
 async def setup(bot: Bot):
-    await bot.add_cog(Leave(bot))
+    pass

@@ -107,8 +107,8 @@ class SSOPatrolService:
             error_message="❌ Не удалось отправить заявление в канал. Попробуйте ещё раз.",
         )
 
-        from cogs.sso_patrol import update_bottom_message
-        await update_bottom_message(interaction.client)
+        from services.bottom_messages import request_refresh
+        await request_refresh(interaction.client, config.CHANNELS["sso_patrol"])
 
     @classmethod
     async def submit_sso_patrol(

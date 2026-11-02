@@ -4,6 +4,7 @@ from typing import Callable
 
 import discord
 
+from core import config
 from core.config import RANKS, RoleId, DivisionId
 from core.exceptions import ServiceError
 from database import divisions
@@ -90,8 +91,8 @@ class ReinstatementService:
             view=view,
         )
 
-        from cogs.reinstatement import update_bottom_message
-        await update_bottom_message(interaction.client)
+        from services.bottom_messages import request_refresh
+        await request_refresh(interaction.client, config.CHANNELS["reinstatement"])
 
     @classmethod
     async def submit_reinstatement(

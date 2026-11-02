@@ -8,10 +8,10 @@ from discord.ext import commands, tasks
 from core import config
 from bot import Bot
 from database import divisions
+from services.bottom_messages import request_refresh
 
 logger = logging.getLogger(__name__)
 
-# 21:00 по МСК
 DAILY_TIME = datetime.time(hour=18, minute=0, tzinfo=datetime.timezone.utc)
 PICS_PATH = Path("./daily_pics").resolve()
 
@@ -49,7 +49,6 @@ class DailyAnnounce(commands.Cog):
                 continue
 
             channel = guild.get_channel(channel_id)
-
             if channel is None:
                 logger.warning(f"Channel with ID {channel_id} not found in guild.")
                 continue
@@ -60,11 +59,8 @@ class DailyAnnounce(commands.Cog):
                 )
 
                 is_promotion_channel = any(d.promotion_channel == channel_id for d in divisions.divisions)
-
                 if is_promotion_channel:
-
-                    from cogs.promotion import update_bottom_message as _update_bottom_message
-                    await _update_bottom_message(self.bot, channel_id)
+                    await request_refresh(self.bot, channel_id)
             except discord.Forbidden:
                 logger.warning(
                     f"Permission denied to send message in channel ID {channel_id}."

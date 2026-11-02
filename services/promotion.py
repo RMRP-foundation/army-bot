@@ -156,8 +156,8 @@ class PromotionService:
         request.message_id = msg_id
         await request.save()
 
-        from cogs.promotion import update_bottom_message
-        await update_bottom_message(interaction.client, interaction.channel.id)
+        from services.bottom_messages import request_refresh
+        await request_refresh(interaction.client, interaction.channel.id)
 
     @classmethod
     async def submit_promotion(

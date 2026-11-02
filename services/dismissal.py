@@ -68,8 +68,8 @@ class DismissalService:
 
         await safe_publish_request(channel=channel, request=request, embed=embed, content=content_mentions, view=view)
 
-        from cogs.dismissal import update_bottom_message
-        await update_bottom_message(bot)
+        from services.bottom_messages import request_refresh
+        await request_refresh(bot, config.CHANNELS["dismissal"])
 
     @staticmethod
     async def submit_dismissal(bot: discord.Client, user: User, full_name: str,

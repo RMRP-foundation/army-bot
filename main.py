@@ -2,6 +2,7 @@ import logging
 from pathlib import Path
 
 import discord
+from discord.ext import commands
 
 from bot import Bot
 from core.config import TOKEN
@@ -25,10 +26,9 @@ logging.getLogger("discord.client").addFilter(
 def main():
     token = TOKEN
 
-    intents = discord.Intents.default()
-    intents.members = True          # Для выдачи ролей и ников
-    intents.message_content = True  # Для работы префиксных команд (!refresh_...)
-    bot = Bot(command_prefix="!", intents=intents, help_command=None)
+    intents = discord.Intents.none()
+    intents.guilds = True
+    bot = Bot(command_prefix=commands.when_mentioned, intents=intents, help_command=None)
 
     bot.run(token)
 

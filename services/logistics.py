@@ -58,8 +58,8 @@ class LogisticsService:
         request.message_id = msg_id
         await request.save()
 
-        from cogs.logistics import update_bottom_message
-        await update_bottom_message(interaction.client)
+        from services.bottom_messages import request_refresh
+        await request_refresh(interaction.client, config.CHANNELS["logistics"])
 
     @staticmethod
     async def submit_logistics(interaction: discord.Interaction, nickname: str, faction: str,

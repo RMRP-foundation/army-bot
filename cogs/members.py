@@ -11,6 +11,7 @@ from core.config import ACADEMY_DAYS_LIMIT, RANK_EMOJIS, RankIndex
 from core.exceptions import ServiceError
 from database import divisions
 from database.models import User
+from services import presence
 from services.authorization import AuthorizationService
 from utils.helpers import safe_respond
 from utils.permissions import is_officer
@@ -49,7 +50,7 @@ class MembersBrowser(discord.ui.LayoutView):
         return (
             f"{i}. {RANK_EMOJIS[u.rank or 0]} "
             f"`{format_static(u.static)}` "
-            f"<@{u.discord_id}>{' ⚠️' if not self.guild.get_member(u.discord_id) else ''}{' ⏰' if overdue else ''}{' ❓' if no_date else ''} "
+            f"<@{u.discord_id}>{' ⚠️' if u.discord_id in presence.absent_ids else ''}{' ⏰' if overdue else ''}{' ❓' if no_date else ''} "
             f"❯ {u.full_name or 'Без имени'} "
             f"❯ {u.position or 'Без должности'}"
         )
@@ -68,7 +69,7 @@ class MembersBrowser(discord.ui.LayoutView):
         if self.show_warning_only:
             members = [
                 (i, u) for i, u in members
-                if not self.guild.get_member(u.discord_id)
+                if u.discord_id in presence.absent_ids
             ]
         return members
 
@@ -205,7 +206,7 @@ class Members(commands.Cog):
             return
 
         if division and division.value == "none":
-            members = await User.find(User.division == None, User.rank != None).to_list()  # noqa: E711
+            members = await User.find({"division": None, "rank": {"$ne": None}}).to_list()
             members.sort(key=lambda u: u.rank or 0, reverse=True)
             members_indexed = list(enumerate(members, start=1))
 

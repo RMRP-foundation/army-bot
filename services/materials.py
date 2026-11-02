@@ -49,8 +49,8 @@ class MaterialsService:
             content=build_mentions(request.user_id, config.MATERIALS_MENTIONS),
         )
 
-        from cogs.materials import update_bottom_message
-        await update_bottom_message(interaction.client)
+        from services.bottom_messages import request_refresh
+        await request_refresh(interaction.client, config.CHANNELS["materials"])
 
     @classmethod
     async def submit_materials(

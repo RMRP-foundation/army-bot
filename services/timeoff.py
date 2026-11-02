@@ -104,8 +104,8 @@ class TimeoffService:
             channel=interaction.channel, request=request, embed=timeoff_embed(request, user_db), content=content_mentions, view=view,
         )
 
-        from cogs.timeoff import update_bottom_message
-        await update_bottom_message(interaction.client)
+        from services.bottom_messages import request_refresh
+        await request_refresh(interaction.client, config.CHANNELS["timeoff"])
 
     @classmethod
     async def submit_timeoff(cls, interaction: discord.Interaction, user_db: User, period: str, view_factory: Callable[[int], discord.ui.View]) -> None:

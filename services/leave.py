@@ -127,8 +127,9 @@ class LeaveService:
         request.message_id = msg_id
         await request.save()
 
-        from cogs.leave import update_bottom_message
-        await update_bottom_message(interaction.client, request.leave_type)
+        from services.bottom_messages import request_refresh
+        channel_key = "ic_leave" if request.leave_type == LeaveType.IC else "ooc_leave"
+        await request_refresh(interaction.client, config.CHANNELS[channel_key])
 
     @staticmethod
     async def submit_leave(

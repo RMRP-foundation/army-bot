@@ -142,8 +142,8 @@ class RoleService:
         request.message_id = msg_id
         await request.save()
 
-        from cogs.role_getting import update_bottom_message
-        await update_bottom_message(interaction.client)
+        from services.bottom_messages import request_refresh
+        await request_refresh(interaction.client, config.CHANNELS["role_getting"])
 
     @classmethod
     async def submit_role(

@@ -118,8 +118,8 @@ class TransferService:
             channel=interaction.channel, request=request, embed=transfer_embed(request, user_db),
             content=mentions, view=view, error_message="❌ Не удалось отправить заявление в канал. Попробуйте ещё раз.",
         )
-        from cogs.transfers import update_bottom_message
-        await update_bottom_message(interaction.client, interaction.channel.id)
+        from services.bottom_messages import request_refresh
+        await request_refresh(interaction.client, interaction.channel.id)
 
     @classmethod
     async def submit_transfer(
@@ -171,8 +171,8 @@ class TransferService:
         if not new_division:
             raise ServiceError("❌ Целевое подразделение не найдено.")
 
-        from cogs.transfers import update_bottom_message
-        await update_bottom_message(interaction.client, interaction.channel.id)
+        from services.bottom_messages import request_refresh
+        await request_refresh(interaction.client, interaction.channel.id)
 
         from ui.views.transfers import TransferManagementView
         mentions = build_request_mentions(request.user_id, new_division.division_id)
