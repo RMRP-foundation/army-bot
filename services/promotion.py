@@ -288,11 +288,17 @@ class PromotionService:
         request = PromotionRequest(**updated_dict)
 
         new_division = target_user_db.division
+        new_position = target_user_db.position
         if div.abbreviation.lower() == "ва" and request.target_rank == RankIndex.JUNIOR_SERGEANT:
             if vbp := divisions.get_division_by_abbreviation("ВБП"):
                 new_division = vbp.division_id
 
-        await target_user_db.set({User.rank: request.target_rank, User.division: new_division})
+        if div.abbreviation.lower() == "вк" and request.target_rank == RankIndex.JUNIOR_LIEUTENANT:
+            new_position = "Сотрудник отдела по кадровой работе"
+
+        await target_user_db.set({User.rank: request.target_rank,
+                                  User.division: new_division,
+                                  User.position: new_position})
 
         if member:
             await MemberService.sync_member_discord(
