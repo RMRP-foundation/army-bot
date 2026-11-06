@@ -47,7 +47,7 @@ class TimeoffService:
         Raises:
             ServiceError: Если не выполнено любое из условий.
         """
-        min_rank = RankIndex.JUNIOR_SERGEANT
+        min_rank = RankIndex.CORPORAL
         if (user_db.rank or 0) < min_rank:
             raise ServiceError(f"### Вы не можете подать заявление на отгул. Требуется звание: {config.RANKS[min_rank]}+")
 
