@@ -17,7 +17,10 @@ from database.models import (
     TimeoffRequest,
     SSOPatrolRequest,
     MaterialsReport,
-    LogisticsRequest, LeaveRequest, PromotionRequest,
+    LogisticsRequest,
+    LeaveRequest,
+    PromotionRequest,
+    Setting,
 )
 
 _IS_INITIALIZED = False
@@ -37,6 +40,7 @@ MODELS = [
     LogisticsRequest,
     LeaveRequest,
     PromotionRequest,
+    Setting,
 ]
 
 

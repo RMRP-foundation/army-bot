@@ -41,6 +41,12 @@ class Bot(commands.Bot):
     async def setup_hook(self):
         await establish_db_connection()
         await divisions.load()
+
+        from core import config
+        from database.models import Setting
+        if setting := await Setting.find_one(Setting.key == "supply_info_link"):
+            config.SUPPLY_INFO_LINK = setting.value
+
         audit_logger.set_bot(self)
 
         load_buttons(self)

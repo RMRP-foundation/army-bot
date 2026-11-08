@@ -356,6 +356,14 @@ class PromotionRequest(Document):
         indexes = [IndexModel([("user_id", 1), ("status", 1)])]
 
 
+class Setting(Document):
+    key: Indexed(str, unique=True)
+    value: str
+
+    class Settings:
+        name = "settings"
+
+
 class BottomMessage(Document):
     channel_id: Indexed(int, unique=True)
     message_id: int

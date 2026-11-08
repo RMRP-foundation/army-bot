@@ -2,6 +2,7 @@ from typing import TYPE_CHECKING
 
 import discord
 
+from core import config
 from services import admin_db
 from utils.helpers import safe_respond
 from utils.permissions import is_service_account
@@ -83,3 +84,24 @@ class AddMemberModal(ServiceModal):
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer()
         await self.panel.add_member(interaction, self.discord_id.value)
+
+
+class SupplyLinkModal(ServiceModal):
+    def __init__(self, panel: "AdminPanel"):
+        super().__init__(title="Ссылка на правила склада")
+        self.panel = panel
+        self.link_input = discord.ui.TextInput(
+            default=config.SUPPLY_INFO_LINK,
+            placeholder="https://discord.com/channels/...",
+            max_length=300,
+            required=True,
+        )
+        self.add_item(discord.ui.Label(
+            text="URL сообщения со складом",
+            description="Вставьте Discord-ссылку на пост с правилами/лимитами",
+            component=self.link_input,
+        ))
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        await self.panel.update_supply_link(interaction, self.link_input.value.strip())
