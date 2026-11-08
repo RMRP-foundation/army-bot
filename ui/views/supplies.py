@@ -4,7 +4,7 @@ import re
 import discord
 from discord import Interaction
 
-from core import config
+from core import constants
 from core.constants import SUPPLY_ITEMS
 from core.exceptions import ServiceError
 from database.models import SupplyRequest, User
@@ -223,7 +223,7 @@ class SupplyManageButton(
                 is_author = officer.discord_id == req.user_id
                 is_staff = is_senior_officer(officer)
                 if not (is_author or is_staff):
-                    raise ServiceError(f"❌ Редактирование доступно только автору или со звания {config.RANKS[config.RankIndex.MAJOR]}+.")
+                    raise ServiceError(f"❌ Редактирование доступно только автору или со звания {constants.RANKS[constants.RankIndex.MAJOR]}+.")
 
                 view = SupplyBuilderView(req, interaction, is_edit_mode=True)
                 target_user = await User.get_by_discord_id(req.user_id)

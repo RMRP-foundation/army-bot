@@ -5,8 +5,8 @@ from typing import Callable
 import discord
 from beanie.odm.operators.find.comparison import NotIn
 
-from core import config
-from core.config import RankIndex
+from core import constants
+from core.constants import DivisionId
 from core.exceptions import ServiceError
 from database import divisions
 from database.counters import get_next_id
@@ -72,12 +72,12 @@ class TransferService:
         Raises:
             ServiceError: Если звание ниже требуемого, либо боец уже состоит в этом подразделении.
         """
-        min_rank = RankIndex.JUNIOR_SERGEANT if destination.abbreviation != "ССО" else RankIndex.SENIOR_SERGEANT
+        min_rank = constants.RankIndex.JUNIOR_SERGEANT if destination.division_id != DivisionId.SSO else constants.RankIndex.SENIOR_SERGEANT
 
         if (user_db.rank or 0) < min_rank:
             raise ServiceError(
                 f"### ❌ Отказано в подаче\nВ подразделение **{destination.abbreviation}** "
-                f"можно вступить только со звания **{config.RANKS[min_rank]}** и выше."
+                f"можно вступить только со звания **{constants.RANKS[min_rank]}** и выше."
             )
 
         if user_db.division == destination.division_id:

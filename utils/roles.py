@@ -1,7 +1,7 @@
 import discord
 from discord import Role
 
-from core import config
+from core import config, constants
 from core.config import RoleId
 from database import divisions
 
@@ -45,15 +45,15 @@ def to_rank(initial_roles: list[discord.Role], rank: int | None) -> list[Role]:
 
     if rank is not None:
         target_role_ids.add(RoleId.MILITARY.value)
-        if rank >= config.RankIndex.SENIOR_SERGEANT:
+        if rank >= constants.RankIndex.SENIOR_SERGEANT:
             target_role_ids.add(RoleId.CONTRACT.value)
-        if rank >= config.RankIndex.MAJOR:
+        if rank >= constants.RankIndex.MAJOR:
             target_role_ids.add(RoleId.BRIGADE_HQ.value)
-        if rank == config.RankIndex.MAJOR:
+        if rank == constants.RankIndex.MAJOR:
             target_role_ids.add(RoleId.UNIT_DEPUTY_COMMANDER.value)
-        elif rank >= config.RankIndex.LIEUTENANT_COLONEL:
+        elif rank >= constants.RankIndex.LIEUTENANT_COLONEL:
             target_role_ids.update([RoleId.GENERAL_HQ.value, RoleId.UNIT_COMMANDER.value])
-        target_role_ids.add(config.RANK_ROLES[config.RANKS[rank]])
+        target_role_ids.add(config.RANK_ROLES[constants.RANKS[rank]])
 
     roles_to_remove = set(config.RANK_ROLES.values())
     roles_to_remove.update([
@@ -92,7 +92,7 @@ def get_rank_from_roles(roles: list[discord.Role]) -> int | None:
 
     for rank, role_id in config.RANK_ROLES.items():
         if role_id in role_ids:
-            for rank_num, rank_name in enumerate(config.RANKS):
+            for rank_num, rank_name in enumerate(constants.RANKS):
                 if rank_name == rank:
                     return rank_num
     return None

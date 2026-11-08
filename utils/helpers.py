@@ -5,8 +5,8 @@ from typing import Iterable
 import discord
 from discord.utils import MISSING
 
-from core import config
-from core.constants import LOADING_MESSAGES
+from core.config import RANK_ROLES
+from core.constants import LOADING_MESSAGES, DivisionId, RANKS
 from core.exceptions import ServiceError
 from database import divisions
 
@@ -72,12 +72,12 @@ def build_request_mentions(
         user_id: int,
         user_division_id: int | None = None,
         min_privilege: int = 2,
-        fallback_abbr: str = "ВК",
+        fallback_id: int = DivisionId.VK,
 ) -> str:
     """Автор + руководящие должности его подразделения (или резервного, если позиций нет)."""
     div = divisions.get_division(user_division_id)
     if not div or not div.positions:
-        div = divisions.get_division_by_abbreviation(fallback_abbr)
+        div = divisions.get_division(fallback_id)
 
     positions = div.positions if (div and div.positions) else []
     role_ids = [pos.role_id for pos in positions if pos.privilege.value >= min_privilege and pos.role_id]
@@ -87,8 +87,8 @@ def build_request_mentions(
 def build_officer_mentions(user_id: int, min_rank_index: int) -> str:
     """Спойлер с упоминанием автора и всего командного состава от указанного звания и выше."""
     officer_role_ids = [
-        role_id for rank_name, role_id in config.RANK_ROLES.items()
-        if config.RANKS.index(rank_name) >= min_rank_index
+        role_id for rank_name, role_id in RANK_ROLES.items()
+        if RANKS.index(rank_name) >= min_rank_index
     ]
     return build_mentions(user_id, officer_role_ids)
 

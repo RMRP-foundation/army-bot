@@ -1,5 +1,17 @@
 import re
+from enum import IntEnum, Enum
 
+
+class DivisionId(IntEnum):
+    VBP = 0
+    VA = 1
+    VK = 2
+    ROIO = 3
+    VP = 4
+    SSO = 5
+    MR = 6
+    GENERAL_STAFF = 7
+    KMB = 8
 
 class RankIndex:
     """Индексы званий для проверок прав доступа"""
@@ -109,6 +121,7 @@ SUPPLY_LIMITS = {
 
 MATERIAL_PRICE = 8
 
+
 nickname_regex = re.compile("^([А-яЁё][а-яё]+) ([А-яЁё][а-яё]+)$")
 
 
@@ -153,3 +166,17 @@ LOADING_MESSAGES = [
     "🧫 Трансмутируем данные...",
     "🧷 Валидируем гипотезу...",
 ]
+
+
+class Privilege(Enum):
+    COMMANDER = 4
+    DEPUTY_COMMANDER = 3
+    OFFICER = 2
+    DEFAULT = 1
+
+
+class RoleType(str, Enum):
+    ARMY = "army"  # ВС РФ
+    KMB = "kmb" # КМБ
+    SUPPLY_ACCESS = "supply_access"  # Доступ к поставке
+    GOV_EMPLOYEE = "gov_employee"  # Гос. сотрудник

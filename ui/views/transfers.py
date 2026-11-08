@@ -4,7 +4,7 @@ import discord
 
 from core.exceptions import ServiceError
 from database import divisions
-from database.models import Division, TransferRequest, User
+from database.models import Division, TransferRequest
 from services.authorization import AuthorizationService
 from services.transfers import TransferService
 from ui.modals.transfers import TransferModal

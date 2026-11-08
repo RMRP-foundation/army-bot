@@ -5,7 +5,8 @@ from typing import Callable
 import discord
 
 from core import config
-from core.config import RANKS, RoleId, DivisionId
+from core.config import RoleId
+from core.constants import DivisionId, RANKS
 from core.exceptions import ServiceError
 from database import divisions
 from database.counters import get_next_id
@@ -51,7 +52,7 @@ class ReinstatementService:
         has_perm = is_high_command(officer)
         if not has_perm and officer.division:
             div = divisions.get_division(officer.division)
-            if div and div.abbreviation == "УВП":
+            if div and div.division_id == DivisionId.VP:
                 has_perm = True
 
         if not has_perm:
@@ -81,7 +82,7 @@ class ReinstatementService:
     @staticmethod
     async def publish_request(interaction: discord.Interaction, request: ReinstatementRequest, user_db: User, view: discord.ui.View) -> None:
         """Публикует заявление в канал УВП."""
-        division = divisions.get_division_by_abbreviation("УВП")
+        division = divisions.get_division(DivisionId.VP)
 
         await safe_publish_request(
             channel=interaction.channel,
@@ -191,7 +192,7 @@ class ReinstatementService:
         if not target_user_db:
             target_user_db = User(discord_id=request.user, pre_inited=True)
         target_user_db.rank = rank_index
-        target_user_db.division = DivisionId.VPB
+        target_user_db.division = DivisionId.VBP
         await target_user_db.save()
 
         member = await interaction.client.getch_member(request.user)

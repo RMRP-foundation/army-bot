@@ -2,7 +2,8 @@ import datetime
 import logging
 
 import discord
-from core.config import DivisionId, BLACKLIST_MENTIONS, PENALTY_THRESHOLD, CHANNELS
+from core.config import BLACKLIST_MENTIONS, PENALTY_THRESHOLD, CHANNELS
+from core.constants import DivisionId
 from database.models import User, Blacklist, LeaveRequest
 from ui.embeds.leave import leave_embed
 from utils.helpers import safe_edit_message, build_mentions

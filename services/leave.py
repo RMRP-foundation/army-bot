@@ -5,7 +5,7 @@ from typing import Callable
 
 import discord
 
-from core import config
+from core import constants, config
 from core.config import IC_MAX_DAYS, OOC_MAX_DAYS, OOC_MIN_DAYS, IC_MIN_DAYS
 from core.exceptions import ServiceError
 from database.counters import get_next_id
@@ -159,7 +159,7 @@ class LeaveService:
     async def _validate_reviewer_permissions(officer: User, requester_id: int) -> None:
         """Проверяет звание и субординацию офицера, рассматривающего заявление."""
         if not is_senior_officer(officer):
-            raise ServiceError(f"❌ Доступно со звания {config.RANKS[config.RankIndex.MAJOR]}.")
+            raise ServiceError(f"❌ Доступно со звания {constants.RANKS[constants.RankIndex.MAJOR]}.")
 
         requester = await User.get_by_discord_id(requester_id)
         if requester and not is_higher_rank(officer, requester):

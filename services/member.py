@@ -1,18 +1,16 @@
 import logging
-from typing import TYPE_CHECKING
 
 import discord
 
 from core import config
 from core.config import EXCLUDED_ROLES, RoleId
+from core.constants import DivisionId
 from core.exceptions import ServiceError
 from database import divisions
 from database.models import User
 from utils.roles import to_division, to_position, to_rank
 from utils.user_data import format_static, set_name_if_changed, format_rank
 
-if TYPE_CHECKING:
-    from bot import Bot
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +39,7 @@ class MemberService:
         div = divisions.get_division(user_db.division) if user_db.division else None
 
         # Для подразделения ССО используется оригинальный ник (позывной)
-        if div and div.abbreviation == "ССО":
+        if div and div.division_id == DivisionId.SSO:
             if user_db.leave_status:
                 base_name = original_nick or member.display_name
                 return f"{user_db.leave_status} | {base_name}"[:32]

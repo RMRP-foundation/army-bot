@@ -5,19 +5,20 @@ import discord
 
 
 class RequestStatus(str, Enum):
-    """Унифицированные статусы для всех типов заявок"""
+    """Унифицированные статусы для всех типов заявок (UPPERCASE)."""
 
-    DRAFT = "draft"
-    PENDING = "pending"
-    APPROVED = "approved"
-    REJECTED = "rejected"
-    ANNULLED = "annulled"
-    EXPIRED = "expired"
-    PROMOTED = "promoted"
-    ATTESTATION = "attestation"
+    DRAFT = "DRAFT"
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+    ANNULLED = "ANNULLED"
+    EXPIRED = "EXPIRED"
+    PROMOTED = "PROMOTED"
+    ATTESTATION = "ATTESTATION"
+    CANCELLED = "CANCELLED"
     # Специфичные статусы для переводов
-    OLD_DIVISION_REVIEW = "old_division_review"
-    NEW_DIVISION_REVIEW = "new_division_review"
+    OLD_DIVISION_REVIEW = "OLD_DIVISION_REVIEW"
+    NEW_DIVISION_REVIEW = "NEW_DIVISION_REVIEW"
 
 
 @dataclass

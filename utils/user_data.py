@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from core import config
+from core import config, constants
 from core.constants import nickname_regex
 from core.exceptions import ServiceError
 from database.models import User
@@ -91,7 +91,7 @@ def set_name_if_changed(user: User, full_name: str) -> bool:
 
 def format_rank(rank_index: int | None) -> str:
     """Возвращает 'Эмодзи Название ранга' или 'Без звания', если ранг невалиден."""
-    if rank_index is not None and 0 <= rank_index < len(config.RANKS):
-        return f"{config.RANK_EMOJIS[rank_index]} {config.RANKS[rank_index]}"
+    if rank_index is not None and 0 <= rank_index < len(constants.RANKS):
+        return f"{config.RANK_EMOJIS[rank_index]} {constants.RANKS[rank_index]}"
 
     return "Без звания"

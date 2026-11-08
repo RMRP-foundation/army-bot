@@ -3,8 +3,9 @@ from discord import app_commands
 from discord.ext import commands
 
 from bot import Bot
-from core import config
-from core.config import RANK_EMOJIS, RankIndex
+from core import constants
+from core.config import RANK_EMOJIS
+from core.constants import RankIndex
 from core.exceptions import ServiceError
 from database import divisions
 from database.models import User
@@ -16,8 +17,7 @@ from services.notifications import notify_blacklisted, notify_demoted, notify_di
 from utils.dismissal_logic import check_and_apply_penalty, cleanup_user_leaves
 from utils.helpers import random_loading_message, safe_respond
 from utils.permissions import can_assign_position, has_disciplinary_restrictions, is_higher_rank, is_officer, is_service_account
-from utils.user_data import format_rank, format_static, parse_name, parse_static, clean_name, clean_static, \
-    set_name_if_changed
+from utils.user_data import format_rank, format_static, clean_name, clean_static, set_name_if_changed
 
 
 class UserEdit(commands.Cog):
@@ -118,7 +118,7 @@ class UserEdit(commands.Cog):
             await safe_respond(modal_interaction, f"✅ {user.mention} уволен.")
 
         confirm_modal.add_item(reason_input)
-        rank_name = config.RANKS[user_info.rank] if user_info.rank is not None else "Не указано"
+        rank_name = constants.RANKS[user_info.rank] if user_info.rank is not None else "Не указано"
         confirm_modal.add_item(discord.ui.TextDisplay(f"-# Вы собираетесь уволить {user.display_name} со звания {rank_name}"))
         confirm_modal.on_submit = on_submit
         await interaction.response.send_modal(confirm_modal)
@@ -137,7 +137,7 @@ class UserEdit(commands.Cog):
             await safe_respond(interaction, "❌ Вы не можете повысить военнослужащего с активными дисциплинарными взысканиями или под расследованием.")
             return
 
-        if user_info.rank >= len(config.RANKS) - 1:
+        if user_info.rank >= len(constants.RANKS) - 1:
             await safe_respond(interaction, f"⚠️ {user.mention} уже имеет максимальное звание!")
             return
 
@@ -147,7 +147,7 @@ class UserEdit(commands.Cog):
             return
 
         user_info.rank = target_rank
-        rank_name = config.RANKS[user_info.rank]
+        rank_name = constants.RANKS[user_info.rank]
         await user_info.save()
 
         await MemberService.sync_member_discord(member=user, user_db=user_info, reason=f"Повысил {interaction.user.display_name}")
@@ -214,7 +214,7 @@ class UserEdit(commands.Cog):
             placeholder="Изменить звание",
             options=[
                 discord.SelectOption(default=index == user_info.rank, emoji=RANK_EMOJIS[index], label=name, value=str(index))
-                for index, name in enumerate(config.RANKS)
+                for index, name in enumerate(constants.RANKS)
             ],
         )
 
@@ -244,10 +244,10 @@ class UserEdit(commands.Cog):
             if old_rank != new_rank:
                 if old_rank < new_rank:
                     audit_action = AuditAction.PROMOTED
-                    notification = notify_promoted(interaction.client, user.id, config.RANKS[new_rank])
+                    notification = notify_promoted(interaction.client, user.id, constants.RANKS[new_rank])
                 else:
                     audit_action = AuditAction.DEMOTED
-                    notification = notify_demoted(interaction.client, user.id, config.RANKS[new_rank])
+                    notification = notify_demoted(interaction.client, user.id, constants.RANKS[new_rank])
 
             await self._finalize_change(
                 interaction, user, user_info, reason=f"Изменение звания {interaction.user.display_name}",

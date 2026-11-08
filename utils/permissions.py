@@ -1,10 +1,9 @@
-from dataclasses import dataclass
-
 import discord
 from discord.ext import commands
 
-from core import config, constants
-from database.models import User, Privilege
+from core import config, rules, constants
+from core.constants import Privilege
+from database.models import User
 
 
 def is_service_account(discord_id: int) -> bool:
@@ -38,19 +37,19 @@ def check_rank_silent(user: User, min_rank: int) -> bool:
 
 def is_officer(user: User) -> bool:
     """Проверка на офицера (Капитан+)"""
-    return check_rank_silent(user, config.RankIndex.CAPTAIN)
+    return check_rank_silent(user, constants.RankIndex.CAPTAIN)
 
 def is_senior_officer(user: User) -> bool:
     """Проверка на старшего офицера (Майор+)"""
-    return check_rank_silent(user, config.RankIndex.MAJOR)
+    return check_rank_silent(user, constants.RankIndex.MAJOR)
 
 def is_high_command(user: User) -> bool:
     """Проверка на высшее командование (Полковник+)"""
-    return check_rank_silent(user, config.RankIndex.COLONEL)
+    return check_rank_silent(user, constants.RankIndex.COLONEL)
 
 def is_general(user: User) -> bool:
     """Проверка на генерала (Генерал-майор+)"""
-    return check_rank_silent(user, config.RankIndex.MAJOR_GENERAL)
+    return check_rank_silent(user, constants.RankIndex.MAJOR_GENERAL)
 
 
 def has_penalty_roles(member: discord.Member) -> bool:
@@ -87,31 +86,8 @@ def can_assign_position(
     if editor_division_id == target_division_id:
         return editor_privilege.value > target_privilege.value
 
-    ceiling = config.DIVISION_EXTERNAL_GRANT_CEILING.get(editor_division_id)
+    ceiling = rules.DIVISION_EXTERNAL_GRANT_CEILING.get(editor_division_id)
     if ceiling is None:
         return False
 
     return target_privilege.value <= ceiling.value
-
-
-@dataclass(frozen=True, slots=True)
-class DivisionRule:
-    review_rank: int
-    promote_rank: int = constants.RankIndex.MAJOR
-    review_positions: tuple[str, ...] = ()
-    promote_positions: tuple[str, ...] = ()
-    reviewer_division_id: int | None = None
-
-    def can_review(self, user: User) -> bool:
-        if (user.rank or 0) >= self.review_rank:
-            return True
-        if user.position and self.review_positions:
-            return user.position.strip().lower() in {p.lower() for p in self.review_positions}
-        return False
-
-    def can_promote(self, user: User) -> bool:
-        if (user.rank or 0) >= self.promote_rank:
-            return True
-        if user.position and self.promote_positions:
-            return user.position.strip().lower() in {p.lower() for p in self.promote_positions}
-        return False

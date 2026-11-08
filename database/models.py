@@ -8,13 +8,7 @@ from pydantic import BaseModel, Field
 from pymongo import IndexModel
 
 from core import constants
-
-
-class Privilege(Enum):
-    COMMANDER = 4
-    DEPUTY_COMMANDER = 3
-    OFFICER = 2
-    DEFAULT = 1
+from core.constants import DivisionId, Privilege, RoleType
 
 
 class Position(BaseModel):
@@ -96,7 +90,7 @@ class User(Document):
         if self.division is not None:
             div = divisions.get_division(self.division)
             if div:
-                if div.abbreviation in ["ВА", "КМБ"]:
+                if div.division_id in [DivisionId.VA, DivisionId.KMB]:
                     parts.append(div.abbreviation)
                 else:
                     parts.append(transliterate_abbreviation(div.abbreviation))
@@ -158,13 +152,6 @@ class ReinstatementRequest(Document):
 
     class Settings:
         name = "reinstatement_requests"
-
-
-class RoleType(str, Enum):
-    ARMY = "army"  # ВС РФ
-    KMB = "kmb" # КМБ
-    SUPPLY_ACCESS = "supply_access"  # Доступ к поставке
-    GOV_EMPLOYEE = "gov_employee"  # Гос. сотрудник
 
 
 class RoleData(BaseModel):

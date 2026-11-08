@@ -1,12 +1,10 @@
 import logging
 import os
-from enum import Enum, IntEnum
+from enum import Enum
 
 from dotenv import load_dotenv
 
-from core.constants import RANKS, RankIndex
-from database.models import RoleType, Privilege
-from utils.permissions import DivisionRule
+from core.constants import RANKS, DivisionId, RoleType
 
 load_dotenv()
 
@@ -16,15 +14,16 @@ TOKEN = os.getenv("TOKEN")
 if not TOKEN:
     raise Exception("TOKEN not found")
 
+ENVIRONMENT = os.getenv("ENVIRONMENT")
+if not ENVIRONMENT:
+    raise Exception("ENVIRONMENT not set")
+
 MONGO_URI = os.getenv("MONGO_URI")
 if not MONGO_URI:
     MONGO_URI = "mongodb://localhost:27017"
     logger.warning("MONGO_URI not found, using default value")
 MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "TimohaBot")
 
-ENVIRONMENT = os.getenv("ENVIRONMENT")
-if not ENVIRONMENT:
-    raise Exception("ENVIRONMENT not set")
 
 SENTRY_DSN = os.getenv("SENTRY_DSN")
 
@@ -36,19 +35,6 @@ SERVICE_ACCOUNT_IDS: frozenset[int] = frozenset({
     538662196297859082
 
 })
-
-
-class DivisionId(IntEnum):
-    VPB = 0
-    VA = 1
-    VK = 2
-    ROIO = 3
-    VP = 4
-    SSO = 5
-    MR = 6
-    GENERAL_STAFF = 7
-    KMB = 8
-
 
 if IS_PRODUCTION:
 
@@ -180,21 +166,6 @@ ROLE_DISPLAY_NAMES = {
         RoleType.GOV_EMPLOYEE: "Гос. сотрудник",
 }
 
-ROLE_REQUIRED_RANKS = {
-    RoleType.ARMY: "Младший лейтенант",
-    RoleType.KMB: "Младший лейтенант",
-    RoleType.SUPPLY_ACCESS: "Подполковник",
-    RoleType.GOV_EMPLOYEE: "Полковник",
-}
-
-ROLE_REQUIRED_RANK_INDICES = {
-    RoleType.ARMY: RankIndex.JUNIOR_LIEUTENANT,
-    RoleType.KMB: RankIndex.JUNIOR_LIEUTENANT,
-    RoleType.SUPPLY_ACCESS: RankIndex.LIEUTENANT_COLONEL,
-    RoleType.GOV_EMPLOYEE: RankIndex.LIEUTENANT_COLONEL,
-}
-
-
 IC_MIN_DAYS = 1
 IC_MAX_DAYS = 5
 OOC_MIN_DAYS = 7
@@ -216,62 +187,17 @@ INVESTIGATION_ROLE = 1399081100927565945  # Ведется расследова�
 ROLE_RESUBMIT_COOLDOWN_HOURS = 24
 SSO_FAIL_COOLDOWN = 300
 
-DIVISION_EXTERNAL_GRANT_CEILING: dict[DivisionId, Privilege] = {
-    DivisionId.GENERAL_STAFF: Privilege.COMMANDER,
-}
-
-PROMOTION_SIMPLE_EVIDENCE_DIVISIONS = {1, 8}
+PROMOTION_SIMPLE_EVIDENCE_DIVISIONS = {DivisionId.VA, DivisionId.KMB}
 PROMOTION_NOTIFY_ROLES: dict[int, tuple[int, ...]] = {
     DivisionId.VA: (1246114382208040970, 1246113946872840214, 1477926048745128048),
     DivisionId.VK: (1246114382208040970, 1246113946872840214, 1477925799205015582,
-        1524846478856818977, 1524846485907181668),
+                    1524846478856818977, 1524846485907181668),
     DivisionId.ROIO: (1294219273031516261, 1246114041227640934, 1313584188116435044),
     DivisionId.VP: (1246113944897323150, 1246114040024010752),
     DivisionId.SSO: (1246113945887182848, 1246114040758013952),
     DivisionId.MR: (1246114039470227516, 1251045308729790556),
     DivisionId.KMB: (1246114382208040970, 1246113946872840214,
-        1524846478856818977, 1524846485907181668),
-}
-
-PROMOTION_RULES: dict[int, DivisionRule] = {
-    DivisionId.VA: DivisionRule(
-        review_rank=RankIndex.SENIOR_SERGEANT,
-        promote_rank=RankIndex.MAJOR,
-        promote_positions=("Заместитель начальника по кадровой работе",),
-        reviewer_division_id=DivisionId.VK,
-    ),
-    DivisionId.KMB: DivisionRule(
-        review_rank=RankIndex.SENIOR_SERGEANT,
-        promote_rank=RankIndex.MAJOR,
-        promote_positions=("Заместитель начальника по кадровой работе",),
-        reviewer_division_id=DivisionId.VK,
-    ),
-    DivisionId.VK: DivisionRule(
-        review_rank=RankIndex.JUNIOR_LIEUTENANT,
-        promote_rank=RankIndex.MAJOR,
-        promote_positions=("Заместитель начальника по кадровой работе",),
-    ),
-    DivisionId.MR: DivisionRule(
-        review_rank=RankIndex.CAPTAIN,
-        promote_rank=RankIndex.MAJOR,
-        review_positions=("Ком. ПГ", "Старший Инструктор", "Санитарный инструктор"),
-        promote_positions=("Ком. ПГ", "Старший Инструктор",),
-    ),
-    DivisionId.VP: DivisionRule(
-        review_rank=RankIndex.MAJOR,
-        promote_rank=RankIndex.MAJOR,
-        review_positions=("Помощник начальника управления",),
-        promote_positions=("Помощник начальника управления",),
-    ),
-    DivisionId.ROIO: DivisionRule(
-        review_rank=RankIndex.MAJOR,
-        promote_rank=RankIndex.MAJOR,
-        review_positions=("Командир отделения", "Старший сотрудник"),
-    ),
-    DivisionId.SSO: DivisionRule(
-        review_rank=RankIndex.MAJOR,
-        promote_rank=RankIndex.MAJOR,
-    ),
+                     1524846478856818977, 1524846485907181668),
 }
 
 SUPPLY_INFO_LINK = "https://discord.com/channels/1245655012550512670/1251166871064019015/1543582992948007024"

@@ -1,6 +1,6 @@
 import discord
 
-from core import config
+from core import constants
 from core.exceptions import ServiceError
 from database import divisions
 from database.models import User, PromotionRequest
@@ -156,7 +156,7 @@ async def _promotion_apply_callback(interaction: discord.Interaction) -> None:
         if not div:
             raise ServiceError("❌ Канал повышений для данного подразделения не настроен.")
 
-        if (user_db.rank or 0) >= config.RankIndex.CAPTAIN:
+        if (user_db.rank or 0) >= constants.RankIndex.CAPTAIN:
             raise ServiceError("❌ Повышение через рапорт доступно только до звания Капитан.")
 
         if user_db.division != div.division_id:

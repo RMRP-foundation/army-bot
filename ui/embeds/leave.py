@@ -1,5 +1,3 @@
-import datetime
-
 import discord
 
 from database import divisions

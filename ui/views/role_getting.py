@@ -3,7 +3,8 @@ import re
 import discord
 
 from core.exceptions import ServiceError
-from database.models import RoleType, User
+from database.models import User
+from core.constants import RoleType
 from services.authorization import AuthorizationService
 from services.role_getting import RoleService
 import texts

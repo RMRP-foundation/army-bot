@@ -1,7 +1,8 @@
 import discord
 
 from core import config
-from database.models import RoleType, RoleRequest
+from database.models import RoleRequest
+from core.constants import RoleType
 from database.status import get_status_display
 from utils.user_data import format_static
 

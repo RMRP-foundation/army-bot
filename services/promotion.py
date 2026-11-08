@@ -5,8 +5,8 @@ from typing import Callable
 import discord
 from beanie.odm.operators.find.comparison import In
 
-from core import config
-from core.config import RankIndex
+from core import config, rules, constants
+from core.constants import DivisionId, RankIndex
 from core.exceptions import ServiceError
 from database import divisions
 from database.counters import get_next_id
@@ -20,31 +20,6 @@ from utils.mongo_atomic import atomic_status_transition
 from utils.permissions import has_disciplinary_restrictions, is_high_command
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True, slots=True)
-class DivisionRule:
-    review_rank: int
-    promote_rank: int = RankIndex.MAJOR
-    review_positions: tuple[str, ...] = ()
-    promote_positions: tuple[str, ...] = ()
-    reviewer_division_id: int | None = None
-
-    def can_review(self, user: User) -> bool:
-        if (user.rank or 0) >= self.review_rank:
-            return True
-        if user.position and self.review_positions:
-            return user.position.strip().lower() in {p.lower() for p in self.review_positions}
-        return False
-
-    def can_promote(self, user: User) -> bool:
-        if (user.rank or 0) >= self.promote_rank:
-            return True
-        if user.position and self.promote_positions:
-            return user.position.strip().lower() in {p.lower() for p in self.promote_positions}
-        return False
-
-
 
 
 @dataclass(frozen=True)
@@ -71,10 +46,10 @@ class PromotionService:
             return
 
         if (approver.rank or 0) <= report.target_rank:
-            needed = config.RANKS[report.target_rank + 1] if (report.target_rank + 1) < len(config.RANKS) else "выше"
+            needed = constants.RANKS[report.target_rank + 1] if (report.target_rank + 1) < len(constants.RANKS) else "выше"
             raise ServiceError(f"❌ Для проверки этого рапорта требуется звание {needed}+.")
 
-        rule = config.PROMOTION_RULES.get(div.division_id)
+        rule = rules.PROMOTION_RULES.get(div.division_id)
         if not rule:
             raise ServiceError(f"❌ Правила повышения для {div.abbreviation} не настроены.")
 
@@ -97,7 +72,7 @@ class PromotionService:
         if is_high_command(promoter):
             return
 
-        rule = config.PROMOTION_RULES.get(div.division_id)
+        rule = rules.PROMOTION_RULES.get(div.division_id)
         if not rule:
             raise ServiceError(f"❌ Правила повышения для {div.abbreviation} не настроены.")
 
@@ -274,8 +249,8 @@ class PromotionService:
 
         if target_user_db.rank != req.current_rank:
             raise ServiceError(
-                f"❌ Рапорт неактуален: звание бойца изменилось на **{config.RANKS[target_user_db.rank]}** "
-                f"(рапорт подавался со звания **{config.RANKS[req.current_rank]}**)."
+                f"❌ Рапорт неактуален: звание бойца изменилось на **{constants.RANKS[target_user_db.rank]}** "
+                f"(рапорт подавался со звания **{constants.RANKS[req.current_rank]}**)."
             )
 
         updated_dict = await atomic_status_transition(
@@ -289,11 +264,11 @@ class PromotionService:
 
         new_division = target_user_db.division
         new_position = target_user_db.position
-        if div.abbreviation.lower() == "ва" and request.target_rank == RankIndex.JUNIOR_SERGEANT:
-            if vbp := divisions.get_division_by_abbreviation("ВБП"):
+        if div.division_id == DivisionId.VA and request.target_rank == RankIndex.JUNIOR_SERGEANT:
+            if vbp := divisions.get_division(DivisionId.VBP):
                 new_division = vbp.division_id
 
-        if div.abbreviation.lower() == "вк" and request.target_rank == RankIndex.JUNIOR_LIEUTENANT:
+        if div.division_id == DivisionId.VK and request.target_rank == RankIndex.JUNIOR_LIEUTENANT:
             new_position = "Сотрудник отдела по кадровой работе"
 
         await target_user_db.set({User.rank: request.target_rank,
@@ -306,7 +281,7 @@ class PromotionService:
             )
 
         await audit_logger.log_action(action=AuditAction.PROMOTED, initiator=interaction.user, target=request.user_id)
-        await notify_promoted(interaction.client, request.user_id, config.RANKS[request.target_rank])
+        await notify_promoted(interaction.client, request.user_id, constants.RANKS[request.target_rank])
 
         from ui.views.indicators import indicator_view
         return PromotionActionResult(

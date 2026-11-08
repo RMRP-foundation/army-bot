@@ -4,8 +4,8 @@ from typing import Callable
 
 import discord
 
-from core import config
-from core.config import RankIndex
+from core import config, constants
+from core.constants import RankIndex
 from core.exceptions import ServiceError
 from database import divisions
 from database.counters import get_next_id
@@ -52,7 +52,7 @@ class SSOPatrolService:
             raise ServiceError(
                 f"### ❌ Отказано в подаче\n"
                 f"Подать заявление на совместную работу с ССО можно только со звания "
-                f"**{config.RANKS[min_rank]}** и выше."
+                f"**{constants.RANKS[min_rank]}** и выше."
             )
 
         existing = await SSOPatrolRequest.find_one(

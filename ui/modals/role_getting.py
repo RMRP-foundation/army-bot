@@ -1,7 +1,8 @@
 import discord.ui
 
 from core.exceptions import ServiceError
-from database.models import ExtendedRoleData, RoleData, RoleType
+from database.models import ExtendedRoleData, RoleData
+from core.constants import RoleType
 from services.role_getting import RoleService
 from ui.modals.labels import (
     name_input,

@@ -5,8 +5,7 @@ from typing import Callable
 
 import discord
 
-from core import config
-from core.config import RankIndex
+from core import config, constants
 from core.constants import SUPPLY_ITEMS, SUPPLY_LIMITS
 from core.exceptions import ServiceError
 from database.counters import get_next_id
@@ -98,9 +97,9 @@ class SupplyService:
         Raises:
             ServiceError: Если не выполнено любое из условий.
         """
-        min_rank = RankIndex.SENIOR_SERGEANT
+        min_rank = constants.RankIndex.SENIOR_SERGEANT
         if (user_db.rank or 0) < min_rank:
-            raise ServiceError(f"❌ Доступно со звания {config.RANKS[min_rank]}.")
+            raise ServiceError(f"❌ Доступно со звания {constants.RANKS[min_rank]}.")
 
         if has_penalty_roles(member):
             raise ServiceError("❌ Вы не можете создавать заявки на склад, пока у вас есть активные дисциплинарные взыскания.")
@@ -118,7 +117,7 @@ class SupplyService:
     def _validate_reviewer_permissions(officer: User) -> None:
         """Проверяет права офицера на рассмотрение склада (Майор+)."""
         if not is_senior_officer(officer):
-            raise ServiceError(f"❌ Недостаточно прав для этого действия (требуется {config.RANKS[RankIndex.MAJOR]}+).")
+            raise ServiceError(f"❌ Недостаточно прав для этого действия (требуется {constants.RANKS[constants.RankIndex.MAJOR]}+).")
 
     @staticmethod
     async def create_draft(user_id: int) -> SupplyRequest:
