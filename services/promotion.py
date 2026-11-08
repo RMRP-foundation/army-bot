@@ -266,11 +266,14 @@ class PromotionService:
         new_division = target_user_db.division
         new_position = target_user_db.position
         new_transferred_at = target_user_db.transferred_at
+
+        # NOTE: Army-specific rule, don't carry over to other projects.
         if div.division_id == DivisionId.VA and request.target_rank == RankIndex.JUNIOR_SERGEANT:
             if vbp := divisions.get_division(DivisionId.VBP):
                 new_division = vbp.division_id
                 new_transferred_at = discord.utils.utcnow()
 
+        # NOTE: Army-specific rule, don't carry over to other projects.
         if div.division_id == DivisionId.VK and request.target_rank == RankIndex.JUNIOR_LIEUTENANT:
             new_position = "Сотрудник отдела по кадровой работе"
 
