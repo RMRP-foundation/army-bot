@@ -5,6 +5,7 @@ from core import constants
 import texts
 from core.exceptions import ServiceError
 from database.models import User, ReinstatementRequest
+from database.status import RequestStatus
 from services.authorization import AuthorizationService
 from services.reinstatement import ReinstatementService
 from ui.modals.reinstatement import ReinstatementModal
@@ -108,7 +109,7 @@ class ReinstatementManagementButton(
 
     async def _handle_reject_modal(self, interaction: discord.Interaction, officer: User) -> None:
         req = await ReinstatementRequest.find_one(ReinstatementRequest.id == self.request_id)
-        if not req or req.status not in ("PENDING", "ATTESTATION"):
+        if not req or req.status not in (RequestStatus.PENDING, RequestStatus.ATTESTATION):
             await safe_respond(interaction, f"❌ Заявление #{self.request_id} не найдено или уже обработано.")
             return
 

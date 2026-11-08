@@ -13,6 +13,7 @@ from core.exceptions import ServiceError
 from database import divisions
 from database.counters import get_next_id
 from database.models import ExtendedRoleData, RoleData, RoleRequest, User
+from database.status import RequestStatus
 from services.audit import AuditAction, audit_logger
 from services.member import MemberService
 from services.notifications import notify_role_approved, notify_role_rejected
@@ -65,7 +66,7 @@ class RoleService:
     @staticmethod
     async def _get_user_pending_request(user_id: int) -> RoleRequest | None:
         """Находит активную (PENDING) заявку пользователя."""
-        return await RoleRequest.find_one(RoleRequest.user == user_id, RoleRequest.status == "PENDING")
+        return await RoleRequest.find_one(RoleRequest.user == user_id, RoleRequest.status == RequestStatus.PENDING)
 
     @staticmethod
     async def _expire_stale_request(request: RoleRequest, channel: discord.TextChannel | discord.Thread | None) -> None:
@@ -75,13 +76,13 @@ class RoleService:
             ServiceError: Если заявка уже обработана параллельно.
         """
         updated_dict = await atomic_status_transition(
-            RoleRequest.get_pymongo_collection(), request.id, "PENDING", "REJECTED",
+            RoleRequest.get_pymongo_collection(), request.id, RequestStatus.PENDING, RequestStatus.REJECTED,
         )
         if not updated_dict:
             raise ServiceError(f"### ⏳ Заявка #{request.id} уже подана\nПодождите завершения.")
 
         if request.message_id and channel:
-            request.status = "REJECTED"
+            request.status = RequestStatus.REJECTED
             await safe_edit_message(channel.get_partial_message(request.message_id), embed=role_embed(request), view=None)
 
     @classmethod
@@ -126,7 +127,7 @@ class RoleService:
         """Создаёт и сохраняет запрос на роль в базе данных."""
         new_id = await get_next_id("role_requests")
         request = RoleRequest(
-            id=new_id, user=user_id, role_type=role_type, data=data, extended_data=extended_data, status="PENDING",
+            id=new_id, user=user_id, role_type=role_type, data=data, extended_data=extended_data, status=RequestStatus.PENDING,
         )
         await request.create()
         return request
@@ -232,13 +233,13 @@ class RoleService:
             ServiceError: Если заявка не найдена/уже обработана, либо нарушены права доступа.
         """
         req = await RoleRequest.find_one(RoleRequest.id == request_id)
-        if not req or req.status != "PENDING":
+        if not req or req.status != RequestStatus.PENDING:
             raise ServiceError(f"❌ Заявка #{request_id} не найдена или уже обработана.")
 
         cls._validate_reviewer_permissions(officer, req.role_type, req.user)
 
         updated_dict = await atomic_status_transition(
-            RoleRequest.get_pymongo_collection(), request_id, "PENDING", "APPROVED",
+            RoleRequest.get_pymongo_collection(), request_id, RequestStatus.PENDING, RequestStatus.APPROVED,
             extra_fields={"reviewer_id": interaction.user.id, "sent_at": discord.utils.utcnow()},
         )
         if not updated_dict:
@@ -269,13 +270,13 @@ class RoleService:
             ServiceError: Если заявка не найдена/уже обработана, либо нарушены права доступа.
         """
         req = await RoleRequest.find_one(RoleRequest.id == request_id)
-        if not req or req.status != "PENDING":
+        if not req or req.status != RequestStatus.PENDING:
             raise ServiceError(f"❌ Заявка #{request_id} не найдена или уже обработана.")
 
         cls._validate_reviewer_permissions(officer, req.role_type, req.user)
 
         updated_dict = await atomic_status_transition(
-            RoleRequest.get_pymongo_collection(), request_id, "PENDING", "REJECTED",
+            RoleRequest.get_pymongo_collection(), request_id, RequestStatus.PENDING, RequestStatus.REJECTED,
             extra_fields={"reviewer_id": interaction.user.id, "sent_at": discord.utils.utcnow()},
         )
         if not updated_dict:

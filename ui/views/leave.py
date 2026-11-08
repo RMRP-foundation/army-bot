@@ -4,6 +4,7 @@ import discord
 
 from core.exceptions import ServiceError
 from database.models import LeaveType
+from database.status import RequestStatus
 from services.authorization import AuthorizationService
 from services.leave import LeaveService
 from texts import (
@@ -132,11 +133,11 @@ class LeaveManagementButton(
 
 
 class LeaveManagementView(discord.ui.View):
-    def __init__(self, request_id: int, status: str = "PENDING"):
+    def __init__(self, request_id: int, status: str = RequestStatus.PENDING):
         super().__init__(timeout=None)
-        if status == "PENDING":
+        if status == RequestStatus.PENDING:
             self.add_item(LeaveManagementButton("approve", request_id))
             self.add_item(LeaveManagementButton("reject", request_id))
             self.add_item(LeaveManagementButton("cancel", request_id))
-        elif status == "APPROVED":
+        elif status == RequestStatus.APPROVED:
             self.add_item(LeaveManagementButton("annul", request_id))

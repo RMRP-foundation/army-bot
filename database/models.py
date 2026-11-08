@@ -9,6 +9,7 @@ from pymongo import IndexModel
 
 from core import constants
 from core.constants import DivisionId, Privilege, RoleType
+from database.status import RequestStatus
 
 
 class Position(BaseModel):
@@ -145,7 +146,7 @@ class ReinstatementRequest(Document):
     id: int
     user: int
     data: ReinstatementData
-    status: str = "PENDING"
+    status: str = RequestStatus.PENDING
     rank: int | None = None
     reject_reason: str | None = None
     sent_at: datetime.datetime = Field(default_factory=discord.utils.utcnow)
@@ -174,7 +175,7 @@ class RoleRequest(Document):
     role_type: RoleType = RoleType.ARMY
     data: RoleData | None = None
     extended_data: ExtendedRoleData | None = None
-    status: str = "PENDING"
+    status: str = RequestStatus.PENDING
     sent_at: datetime.datetime = Field(default_factory=discord.utils.utcnow)
     message_id: int | None = None
 
@@ -185,7 +186,7 @@ class TimeoffRequest(Document):
     id: int
     user_id: int
     data: RoleData
-    status: str = "PENDING"
+    status: str = RequestStatus.PENDING
     period: str | None = None
     sent_at: datetime.datetime = Field(default_factory=discord.utils.utcnow)
     reviewed_at: datetime.datetime | None = None
@@ -198,7 +199,7 @@ class SupplyRequest(Document):
     id: int
     user_id: int
     items: Dict[str, int] = Field(default_factory=dict)
-    status: str = "PENDING"
+    status: str = RequestStatus.PENDING
     reviewer_id: int | None = None
     created_at: datetime.datetime = Field(default_factory=discord.utils.utcnow)
     reviewed_at: datetime.datetime | None = None
@@ -229,7 +230,7 @@ class DismissalRequest(Document):
     position: str | None = None
     reject_reason: str | None = None
 
-    status: str = "PENDING"  # PENDING, APPROVED, REJECTED
+    status: str = RequestStatus.PENDING  # PENDING, APPROVED, REJECTED
     reviewer_id: int | None = None
     created_at: datetime.datetime = Field(default_factory=discord.utils.utcnow)
     reviewed_at: datetime.datetime | None = None
@@ -267,7 +268,7 @@ class SSOPatrolRequest(Document):
     full_name: str
     reason: str
     date: datetime.datetime = Field(default_factory=discord.utils.utcnow)
-    status: str = "PENDING"
+    status: str = RequestStatus.PENDING
     reviewer_id: int | None = None
 
     class Settings:
@@ -298,7 +299,7 @@ class LogisticsRequest(Document):
     nickname: str
     faction: str
     supply_type: LogisticsType
-    status: str = "PENDING"  # PENDING, APPROVED, REJECTED, EXPIRED
+    status: str = RequestStatus.PENDING  # PENDING, APPROVED, REJECTED, EXPIRED
     reviewer_name: str | None = None
     message_id: int | None = None
     created_at: datetime.datetime = Field(default_factory=discord.utils.utcnow)
@@ -321,7 +322,7 @@ class LeaveRequest(Document):
     ends_at: datetime.datetime
     original_nick: str | None = None  # Ник до отпуска для ССО
 
-    status: str = "PENDING"
+    status: str = RequestStatus.PENDING
     reviewer_id: int | None = None
     annuller_id: int | None = None
     annulled_at: datetime.datetime | None = None
@@ -344,7 +345,7 @@ class PromotionRequest(Document):
     evidence: Dict[str, str] = Field(default_factory=dict)
     score: str | None = None
     reject_reason: str | None = None
-    status: str = "PENDING"  # PENDING, APPROVED, PROMOTED, REJECTED, CANCELLED
+    status: str = RequestStatus.PENDING  # PENDING, APPROVED, PROMOTED, REJECTED, CANCELLED
     reviewer_id: int | None = None
     promoted_by: int | None = None
     created_at: datetime.datetime = Field(default_factory=discord.utils.utcnow)

@@ -8,6 +8,7 @@ from core import constants
 from core.constants import SUPPLY_ITEMS
 from core.exceptions import ServiceError
 from database.models import SupplyRequest, User
+from database.status import RequestStatus
 from services.authorization import AuthorizationService
 from services.supplies import SupplyService
 from ui.embeds.supplies import supplies_embed
@@ -135,7 +136,7 @@ class SupplyBuilderView(discord.ui.View):
 
         if self.is_edit_mode:
             embed.title = f"🛠 Редактирование заявки #{self.request.id}"
-        elif self.request.status == "DRAFT":
+        elif self.request.status == RequestStatus.DRAFT:
             embed.title = "🛠 Создание заявки на склад"
             embed.set_footer(text="Выберите категорию, чтобы добавить предметы.")
 
@@ -153,7 +154,7 @@ class SupplyBuilderView(discord.ui.View):
         await self.refresh_embed(interaction)
 
     async def cancel_callback(self, interaction: discord.Interaction):
-        if not self.is_edit_mode and self.request.status == "DRAFT":
+        if not self.is_edit_mode and self.request.status == RequestStatus.DRAFT:
             await self.request.delete()
         await interaction.response.edit_message(
             content="❌ Действие отменено.", embed=None, view=None
@@ -216,7 +217,7 @@ class SupplyManageButton(
             officer = await AuthorizationService.require_active_soldier(interaction)
 
             req = await SupplyRequest.find_one(SupplyRequest.id == self.request_id)
-            if not req or req.status != "PENDING":
+            if not req or req.status != RequestStatus.PENDING:
                 raise ServiceError(f"❌ Заявка #{self.request_id} не найдена или уже обработана.")
 
             if self.action == "edit":

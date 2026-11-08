@@ -8,6 +8,7 @@ from core import config
 from core.exceptions import ServiceError
 from database.counters import get_next_id
 from database.models import User, DismissalRequest, DismissalType
+from database.status import RequestStatus
 from services.audit import AuditAction, audit_logger
 from services.member import MemberService
 from services.notifications import notify_dismissed, notify_blacklisted
@@ -36,7 +37,7 @@ class DismissalService:
         """Проверяет, что у пользователя нет активного рапорта на увольнение."""
         existing = await DismissalRequest.find_one(
             DismissalRequest.user_id == user_id,
-            DismissalRequest.status == "PENDING",
+            DismissalRequest.status == RequestStatus.PENDING,
         )
         if existing:
             raise ServiceError(f"❌ У вас уже есть активный рапорт #{existing.id}.")
@@ -98,7 +99,7 @@ class DismissalService:
                 уже уволен, либо нарушена субординация.
         """
         req = await DismissalRequest.find_one(DismissalRequest.id == request_id)
-        if not req or req.status != "PENDING":
+        if not req or req.status != RequestStatus.PENDING:
             raise ServiceError(f"❌ Рапорт #{request_id} не найден или уже обработан.")
 
         target_user_db = await User.get_by_discord_id(req.user_id)
@@ -107,7 +108,7 @@ class DismissalService:
 
         if target_user_db.rank is None:
             await atomic_status_transition(
-                DismissalRequest.get_pymongo_collection(), request_id, "PENDING", "REJECTED",
+                DismissalRequest.get_pymongo_collection(), request_id, RequestStatus.PENDING, RequestStatus.REJECTED,
                 extra_fields={"reviewer_id": officer_user_db.discord_id, "reviewed_at": discord.utils.utcnow()},
             )
             raise ServiceError("❌ Военнослужащий уже уволен. Рапорт отклонён.")
@@ -127,7 +128,7 @@ class DismissalService:
             extra_fields["reject_reason"] = reject_reason
 
         updated_dict = await atomic_status_transition(
-            DismissalRequest.get_pymongo_collection(), request_id, "PENDING", new_status, extra_fields=extra_fields,
+            DismissalRequest.get_pymongo_collection(), request_id, RequestStatus.PENDING, new_status, extra_fields=extra_fields,
         )
         if not updated_dict:
             raise ServiceError(f"❌ Рапорт #{request_id} не найден или уже обработан.")
@@ -197,7 +198,7 @@ class DismissalService:
             ServiceError: Если нарушена субординация либо рапорт уже обработан.
         """
         _, target_user_db = await cls._validate_approval_prerequisites(request_id, officer_user_db)
-        request = await cls._apply_atomic_status_change(request_id, "APPROVED", interaction.user.id)
+        request = await cls._apply_atomic_status_change(request_id, RequestStatus.APPROVED, interaction.user.id)
 
         penalty_applied = await cls._execute_dismissal(interaction, request, target_user_db, officer_user_db)
 
@@ -214,7 +215,7 @@ class DismissalService:
             ServiceError: Если нарушена субординация либо рапорт уже обработан.
         """
         await cls._validate_approval_prerequisites(request_id, officer_user_db)
-        request = await cls._apply_atomic_status_change(request_id, "REJECTED", interaction.user.id, reject_reason=reason)
+        request = await cls._apply_atomic_status_change(request_id, RequestStatus.REJECTED, interaction.user.id, reject_reason=reason)
         return DismissalActionResult(request=request, embed=dismissal_embed(request))
 
     @staticmethod
@@ -225,7 +226,7 @@ class DismissalService:
             ServiceError: Если рапорт не найден или уже обработан.
         """
         updated_dict = await atomic_status_transition(
-            DismissalRequest.get_pymongo_collection(), request_id, "PENDING", "REJECTED",
+            DismissalRequest.get_pymongo_collection(), request_id, RequestStatus.PENDING, RequestStatus.REJECTED,
             extra_fields={"reviewed_at": discord.utils.utcnow()},
             extra_filter={"user_id": interaction.user.id},
         )

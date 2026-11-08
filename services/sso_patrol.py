@@ -10,6 +10,7 @@ from core.exceptions import ServiceError
 from database import divisions
 from database.counters import get_next_id
 from database.models import SSOPatrolRequest, User
+from database.status import RequestStatus
 from ui.embeds.sso_patrol import sso_patrol_embed
 from utils.helpers import safe_publish_request, build_mentions
 from utils.mongo_atomic import atomic_status_transition
@@ -17,7 +18,7 @@ from utils.permissions import is_high_command
 
 logger = logging.getLogger(__name__)
 
-STATUS_TEXT = {"approve": ("APPROVED", "Одобрил", "👍"), "reject": ("REJECTED", "Отклонил", "👎")}
+STATUS_TEXT = {"approve": (RequestStatus.APPROVED, "Одобрил", "👍"), "reject": (RequestStatus.REJECTED, "Отклонил", "👎")}
 
 
 @dataclass(frozen=True)
@@ -56,7 +57,7 @@ class SSOPatrolService:
             )
 
         existing = await SSOPatrolRequest.find_one(
-            SSOPatrolRequest.user_id == user_db.discord_id, SSOPatrolRequest.status == "PENDING",
+            SSOPatrolRequest.user_id == user_db.discord_id, SSOPatrolRequest.status == RequestStatus.PENDING,
         )
         if existing:
             raise ServiceError(f"### У вас уже есть активная заявка #{existing.id} на рассмотрении.")
@@ -64,7 +65,7 @@ class SSOPatrolService:
         last_fail = (
             await SSOPatrolRequest.find(
                 SSOPatrolRequest.user_id == user_db.discord_id,
-                SSOPatrolRequest.status == "REJECTED",
+                SSOPatrolRequest.status == RequestStatus.REJECTED,
                 SSOPatrolRequest.reason == "Провал теста",
             ).sort("-date").first_or_none()
         )
@@ -88,7 +89,7 @@ class SSOPatrolService:
             raise ServiceError("### ❌ Ошибка доступа\nРассматривать заявления могут только сотрудники ССО или Высшее командование.")
 
     @staticmethod
-    async def create_request(user_id: int, full_name: str, reason: str, status: str = "PENDING") -> SSOPatrolRequest:
+    async def create_request(user_id: int, full_name: str, reason: str, status: str = RequestStatus.PENDING) -> SSOPatrolRequest:
         """Создаёт и сохраняет запрос на патруль ССО в базе данных."""
         new_id = await get_next_id("sso_patrol_requests")
         request = SSOPatrolRequest(id=new_id, user_id=user_id, full_name=full_name, reason=reason, status=status)
@@ -125,7 +126,7 @@ class SSOPatrolService:
         full_name = user_db.full_name or interaction.user.display_name
 
         if failed_text:
-            request = await cls.create_request(user_id=interaction.user.id, full_name=full_name, reason="Провал теста", status="REJECTED")
+            request = await cls.create_request(user_id=interaction.user.id, full_name=full_name, reason="Провал теста", status=RequestStatus.REJECTED)
             await cls.publish_request(interaction=interaction, request=request, user_db=user_db, view=None, failed_question=failed_text)
             return False
 
@@ -141,14 +142,14 @@ class SSOPatrolService:
             ServiceError: Если заявление не найдено/уже обработано, либо нарушены права доступа.
         """
         req = await SSOPatrolRequest.find_one(SSOPatrolRequest.id == request_id)
-        if not req or req.status != "PENDING":
+        if not req or req.status != RequestStatus.PENDING:
             raise ServiceError(f"### ❌ Заявление #{request_id} не найдено или уже обработано.")
 
         cls._validate_reviewer_permissions(officer, req.user_id)
 
         target_status, status_text, emoji = STATUS_TEXT[action]
         updated_dict = await atomic_status_transition(
-            SSOPatrolRequest.get_pymongo_collection(), request_id, "PENDING", target_status,
+            SSOPatrolRequest.get_pymongo_collection(), request_id, RequestStatus.PENDING, target_status,
             extra_fields={"reviewer_id": interaction.user.id},
         )
         if not updated_dict:

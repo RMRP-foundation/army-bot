@@ -10,6 +10,7 @@ from core.constants import RankIndex, RANKS
 from core.exceptions import ServiceError
 from database.counters import get_next_id
 from database.models import RoleData, TimeoffRequest, User
+from database.status import RequestStatus
 from services.notifications import notify_timeoff_approved, notify_timeoff_rejected
 from ui.embeds.timeoff import timeoff_embed
 from utils.helpers import build_request_mentions, safe_publish_request
@@ -54,13 +55,13 @@ class TimeoffService:
         cutoff = cls._get_msk_day_start_utc()
 
         opened_request = await TimeoffRequest.find_one(
-            TimeoffRequest.user_id == user_db.discord_id, TimeoffRequest.status == "PENDING", TimeoffRequest.sent_at >= cutoff,
+            TimeoffRequest.user_id == user_db.discord_id, TimeoffRequest.status == RequestStatus.PENDING, TimeoffRequest.sent_at >= cutoff,
         )
         if opened_request is not None:
             raise ServiceError(f"### У вас уже есть открытое заявление #{opened_request.id} на рассмотрении.\nОжидайте его рассмотрения.")
 
         approved_request = await TimeoffRequest.find_one(
-            TimeoffRequest.user_id == user_db.discord_id, TimeoffRequest.status == "APPROVED", TimeoffRequest.reviewed_at >= cutoff,
+            TimeoffRequest.user_id == user_db.discord_id, TimeoffRequest.status == RequestStatus.APPROVED, TimeoffRequest.reviewed_at >= cutoff,
         )
         if approved_request:
             raise ServiceError("### Вы уже подавали заявление на отгул сегодня.\nПовторная подача возможна только на следующий день.")
@@ -91,7 +92,7 @@ class TimeoffService:
         request = TimeoffRequest(
             id=new_id, user_id=user_db.discord_id,
             data=RoleData(full_name=user_db.full_name or "Не указано", static_id=user_db.static or 0),
-            period=period, status="PENDING",
+            period=period, status=RequestStatus.PENDING,
         )
         await request.create()
         return request
@@ -126,14 +127,14 @@ class TimeoffService:
             ServiceError: Если заявка не найдена/уже обработана, либо нарушены права доступа.
         """
         req = await TimeoffRequest.find_one(TimeoffRequest.id == request_id)
-        if not req or req.status != "PENDING":
+        if not req or req.status != RequestStatus.PENDING:
             raise ServiceError(f"❌ Заявка #{request_id} не найдена или уже обработана.")
 
         target_user = await User.get_by_discord_id(req.user_id)
         cls._validate_reviewer_permissions(officer, target_user)
 
         updated_dict = await atomic_status_transition(
-            TimeoffRequest.get_pymongo_collection(), request_id, "PENDING", "APPROVED",
+            TimeoffRequest.get_pymongo_collection(), request_id, RequestStatus.PENDING, RequestStatus.APPROVED,
             extra_fields={"reviewed_at": discord.utils.utcnow()},
         )
         if not updated_dict:
@@ -158,14 +159,14 @@ class TimeoffService:
             ServiceError: Если заявка не найдена/уже обработана, либо нарушены права доступа.
         """
         req = await TimeoffRequest.find_one(TimeoffRequest.id == request_id)
-        if not req or req.status != "PENDING":
+        if not req or req.status != RequestStatus.PENDING:
             raise ServiceError(f"❌ Заявка #{request_id} не найдена или уже обработана.")
 
         target_user = await User.get_by_discord_id(req.user_id)
         cls._validate_reviewer_permissions(officer, target_user)
 
         updated_dict = await atomic_status_transition(
-            TimeoffRequest.get_pymongo_collection(), request_id, "PENDING", "REJECTED",
+            TimeoffRequest.get_pymongo_collection(), request_id, RequestStatus.PENDING, RequestStatus.REJECTED,
             extra_fields={"reviewed_at": discord.utils.utcnow()},
         )
         if not updated_dict:
@@ -190,7 +191,7 @@ class TimeoffService:
             ServiceError: Если заявка не найдена или уже обработана офицером.
         """
         updated_dict = await atomic_status_transition(
-            TimeoffRequest.get_pymongo_collection(), request_id, "PENDING", "REJECTED",
+            TimeoffRequest.get_pymongo_collection(), request_id, RequestStatus.PENDING, RequestStatus.REJECTED,
             extra_fields={"reviewed_at": discord.utils.utcnow()}, extra_filter={"user_id": user_id},
         )
         if not updated_dict:

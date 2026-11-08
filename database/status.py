@@ -15,7 +15,6 @@ class RequestStatus(str, Enum):
     EXPIRED = "EXPIRED"
     PROMOTED = "PROMOTED"
     ATTESTATION = "ATTESTATION"
-    CANCELLED = "CANCELLED"
     # Специфичные статусы для переводов
     OLD_DIVISION_REVIEW = "OLD_DIVISION_REVIEW"
     NEW_DIVISION_REVIEW = "NEW_DIVISION_REVIEW"
@@ -62,7 +61,7 @@ def get_status_display(status: RequestStatus | str) -> StatusDisplay:
     """
     if isinstance(status, str):
         try:
-            status = RequestStatus(status.lower())
+            status = RequestStatus(status.upper())
         except ValueError:
             # Fallback для неизвестных статусов
             return StatusDisplay("❓", "Неизвестно", discord.Color.default())

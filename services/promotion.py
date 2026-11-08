@@ -11,6 +11,7 @@ from core.exceptions import ServiceError
 from database import divisions
 from database.counters import get_next_id
 from database.models import Division, PromotionRequest, User
+from database.status import RequestStatus
 from services.audit import AuditAction, audit_logger
 from services.member import MemberService
 from services.notifications import notify_promoted, notify_promotion_approved, notify_promotion_rejected
@@ -146,7 +147,7 @@ class PromotionService:
         """
         existing = await PromotionRequest.find_one(
             PromotionRequest.user_id == interaction.user.id,
-            In(PromotionRequest.status, ["PENDING", "APPROVED"]),
+            In(PromotionRequest.status, [RequestStatus.PENDING, RequestStatus.APPROVED]),
         )
         if existing:
             raise ServiceError(f"❌ У вас уже есть активный рапорт #{existing.id}.")
@@ -168,11 +169,11 @@ class PromotionService:
             ServiceError: Если рапорт не найден/уже обработан, подразделение не найдено,
                 либо нарушены правила проверки.
         """
-        req, div = await cls._get_request_and_division(request_id, ("PENDING",))
+        req, div = await cls._get_request_and_division(request_id, (RequestStatus.PENDING,))
         cls.validate_can_review(approver, div, req)
 
         updated_dict = await atomic_status_transition(
-            PromotionRequest.get_pymongo_collection(), request_id, "PENDING", "APPROVED",
+            PromotionRequest.get_pymongo_collection(), request_id, RequestStatus.PENDING, RequestStatus.APPROVED,
             extra_fields={"reviewer_id": interaction.user.id},
         )
         if not updated_dict:
@@ -199,11 +200,11 @@ class PromotionService:
             ServiceError: Если рапорт не найден/уже обработан, подразделение не найдено,
                 либо нарушены правила проверки.
         """
-        req, div = await cls._get_request_and_division(request_id, ("PENDING", "APPROVED"))
+        req, div = await cls._get_request_and_division(request_id, (RequestStatus.PENDING, RequestStatus.APPROVED))
         cls.validate_can_review(reviewer, div, req)
 
         updated_dict = await atomic_status_transition(
-            PromotionRequest.get_pymongo_collection(), request_id, ["PENDING", "APPROVED"], "REJECTED",
+            PromotionRequest.get_pymongo_collection(), request_id, [RequestStatus.PENDING, RequestStatus.APPROVED], RequestStatus.REJECTED,
             extra_fields={"reviewer_id": interaction.user.id, "reject_reason": reason},
         )
         if not updated_dict:
@@ -232,7 +233,7 @@ class PromotionService:
             ServiceError: Если рапорт не найден/не одобрен, подразделение не найдено, боец под
                 дисциплинарным взысканием, либо больше не состоит на службе.
         """
-        req, div = await cls._get_request_and_division(request_id, ("APPROVED",))
+        req, div = await cls._get_request_and_division(request_id, (RequestStatus.APPROVED,))
         cls.validate_can_promote(promoter, div)
 
         member = await interaction.client.getch_member(req.user_id)
@@ -242,7 +243,7 @@ class PromotionService:
         target_user_db = await User.get_by_discord_id(req.user_id)
         if not target_user_db or target_user_db.rank is None:
             await atomic_status_transition(
-                PromotionRequest.get_pymongo_collection(), request_id, "APPROVED", "REJECTED",
+                PromotionRequest.get_pymongo_collection(), request_id, RequestStatus.APPROVED, RequestStatus.REJECTED,
                 extra_fields={"reviewer_id": interaction.user.id, "reject_reason": "Военнослужащий уволен."},
             )
             raise ServiceError("❌ Военнослужащий больше не состоит на службе.")
@@ -254,7 +255,7 @@ class PromotionService:
             )
 
         updated_dict = await atomic_status_transition(
-            PromotionRequest.get_pymongo_collection(), request_id, "APPROVED", "PROMOTED",
+            PromotionRequest.get_pymongo_collection(), request_id, RequestStatus.APPROVED, RequestStatus.PROMOTED,
             extra_fields={"promoted_by": interaction.user.id},
         )
         if not updated_dict:
@@ -300,7 +301,7 @@ class PromotionService:
             ServiceError: Если рапорт не найден или уже обработан.
         """
         updated_dict = await atomic_status_transition(
-            PromotionRequest.get_pymongo_collection(), request_id, "PENDING", "CANCELLED",
+            PromotionRequest.get_pymongo_collection(), request_id, RequestStatus.PENDING, RequestStatus.REJECTED,
             extra_filter={"user_id": user_id},
         )
         if not updated_dict:

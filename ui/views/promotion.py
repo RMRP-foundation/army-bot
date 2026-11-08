@@ -4,6 +4,7 @@ from core import constants
 from core.exceptions import ServiceError
 from database import divisions
 from database.models import User, PromotionRequest
+from database.status import RequestStatus
 from services.authorization import AuthorizationService
 from services.promotion import PromotionService
 from texts import promotion_description, promotion_title
@@ -40,7 +41,7 @@ class PromotionManagementButton(
 
     async def _handle_reject_modal(self, interaction: discord.Interaction, officer: User) -> None:
         req = await PromotionRequest.find_one(PromotionRequest.id == self.report_id)
-        if not req or req.status not in ("PENDING", "APPROVED"):
+        if not req or req.status not in (RequestStatus.PENDING, RequestStatus.APPROVED):
             await safe_respond(interaction, f"❌ Рапорт #{self.report_id} не найден или уже обработан.")
             return
 

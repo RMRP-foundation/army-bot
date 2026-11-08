@@ -10,6 +10,7 @@ from core.constants import SUPPLY_ITEMS, SUPPLY_LIMITS
 from core.exceptions import ServiceError
 from database.counters import get_next_id
 from database.models import SupplyRequest, User
+from database.status import RequestStatus
 from ui.embeds.supplies import supplies_embed
 from ui.embeds.supplies_audit import supply_issuance_embed
 from utils.helpers import safe_edit_message, safe_publish_request, build_mentions
@@ -106,7 +107,7 @@ class SupplyService:
 
         cutoff = discord.utils.utcnow() - datetime.timedelta(hours=24)
         existing = await SupplyRequest.find_one(
-            SupplyRequest.user_id == user_db.discord_id, SupplyRequest.status == "PENDING", SupplyRequest.created_at >= cutoff,
+            SupplyRequest.user_id == user_db.discord_id, SupplyRequest.status == RequestStatus.PENDING, SupplyRequest.created_at >= cutoff,
         )
         if existing:
             raise ServiceError(f"❌ У вас уже есть активная заявка #{existing.id}. Дождитесь её рассмотрения.")
@@ -123,7 +124,7 @@ class SupplyService:
     async def create_draft(user_id: int) -> SupplyRequest:
         """Создаёт пустой черновик заявки на склад."""
         new_id = await get_next_id("supply_requests")
-        req = SupplyRequest(id=new_id, user_id=user_id, status="DRAFT")
+        req = SupplyRequest(id=new_id, user_id=user_id, status=RequestStatus.DRAFT)
         await req.create()
         return req
 
@@ -155,7 +156,7 @@ class SupplyService:
         cls._check_supply_cooldown(user_db.last_supply_at)
 
         updated_dict = await atomic_status_transition(
-            SupplyRequest.get_pymongo_collection(), request.id, "DRAFT", "PENDING",
+            SupplyRequest.get_pymongo_collection(), request.id, RequestStatus.DRAFT, RequestStatus.PENDING,
             extra_fields={"items": items, "created_at": discord.utils.utcnow()},
         )
         if not updated_dict:
@@ -174,7 +175,7 @@ class SupplyService:
         cls.validate_limits(items)
 
         updated_dict = await atomic_status_transition(
-            SupplyRequest.get_pymongo_collection(), request.id, "PENDING", "PENDING", extra_fields={"items": items},
+            SupplyRequest.get_pymongo_collection(), request.id, RequestStatus.PENDING, RequestStatus.PENDING, extra_fields={"items": items},
         )
         if not updated_dict:
             raise ServiceError("❌ Заявка уже обработана другим офицером.")
@@ -195,7 +196,7 @@ class SupplyService:
             ServiceError: Если заявка не найдена/уже обработана, заявитель не найден, либо действует КД.
         """
         req = await SupplyRequest.find_one(SupplyRequest.id == request_id)
-        if not req or req.status != "PENDING":
+        if not req or req.status != RequestStatus.PENDING:
             raise ServiceError(f"❌ Заявка #{request_id} не найдена или уже обработана.")
 
         cls._validate_reviewer_permissions(officer)
@@ -208,7 +209,7 @@ class SupplyService:
 
         now = discord.utils.utcnow()
         updated_dict = await atomic_status_transition(
-            SupplyRequest.get_pymongo_collection(), request_id, "PENDING", "APPROVED",
+            SupplyRequest.get_pymongo_collection(), request_id, RequestStatus.PENDING, RequestStatus.APPROVED,
             extra_fields={"reviewer_id": interaction.user.id, "reviewed_at": now},
         )
         if not updated_dict:
@@ -219,9 +220,9 @@ class SupplyService:
         await target_user.save()
 
         await SupplyRequest.get_pymongo_collection().update_many(
-            {"user_id": request.user_id, "status": "PENDING", "_id": {"$ne": request.id}},
+            {"user_id": request.user_id, "status": RequestStatus.PENDING, "_id": {"$ne": request.id}},
             {"$set": {
-                "status": "REJECTED",
+                "status": RequestStatus.REJECTED,
                 "reviewer_id": interaction.client.user.id if interaction.client.user else None,
                 "reviewed_at": now,
             }},
@@ -258,13 +259,13 @@ class SupplyService:
             ServiceError: Если заявка не найдена/уже обработана.
         """
         req = await SupplyRequest.find_one(SupplyRequest.id == request_id)
-        if not req or req.status != "PENDING":
+        if not req or req.status != RequestStatus.PENDING:
             raise ServiceError(f"❌ Заявка #{request_id} не найдена или уже обработана.")
 
         cls._validate_reviewer_permissions(officer)
 
         updated_dict = await atomic_status_transition(
-            SupplyRequest.get_pymongo_collection(), request_id, "PENDING", "REJECTED",
+            SupplyRequest.get_pymongo_collection(), request_id, RequestStatus.PENDING, RequestStatus.REJECTED,
             extra_fields={"reviewer_id": interaction.user.id, "reviewed_at": discord.utils.utcnow()},
         )
         if not updated_dict:

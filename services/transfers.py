@@ -11,6 +11,7 @@ from core.exceptions import ServiceError
 from database import divisions
 from database.counters import get_next_id
 from database.models import Division, TransferRequest, User
+from database.status import RequestStatus
 from services.audit import AuditAction, audit_logger
 from services.member import MemberService
 from services.notifications import notify_transfer_approved, notify_transfer_rejected
@@ -58,7 +59,7 @@ class TransferService:
     async def validate_no_active_request(user_id: int) -> None:
         """Проверяет, что у пользователя нет открытых заявлений на перевод."""
         opened_request = await TransferRequest.find_one(
-            TransferRequest.user_id == user_id, NotIn(TransferRequest.status, ["APPROVED", "REJECTED"]),
+            TransferRequest.user_id == user_id, NotIn(TransferRequest.status, [RequestStatus.APPROVED, RequestStatus.REJECTED]),
         )
         if opened_request is not None:
             raise ServiceError(
@@ -93,7 +94,7 @@ class TransferService:
         этап согласования старым подразделением пропускается — заявка стартует сразу с NEW_DIVISION_REVIEW.
         """
         division = divisions.get_division(user_db.division)
-        status = "OLD_DIVISION_REVIEW" if (division and division.positions) else "NEW_DIVISION_REVIEW"
+        status = RequestStatus.OLD_DIVISION_REVIEW if (division and division.positions) else RequestStatus.NEW_DIVISION_REVIEW
 
         new_id = await get_next_id("transfer_requests")
         request = TransferRequest(
@@ -110,7 +111,7 @@ class TransferService:
         interaction: discord.Interaction, request: TransferRequest, user_db: User, destination: Division, view: discord.ui.View,
     ) -> None:
         """Публикует заявку на перевод в текущий канал."""
-        first_division = destination if request.status == "NEW_DIVISION_REVIEW" else divisions.get_division(request.old_division_id)
+        first_division = destination if request.status == RequestStatus.NEW_DIVISION_REVIEW else divisions.get_division(request.old_division_id)
         div_id = first_division.division_id if first_division else destination.division_id
         mentions = build_request_mentions(interaction.user.id, div_id)
 
@@ -149,7 +150,7 @@ class TransferService:
                 либо не имеет прав на согласование от старого подразделения.
         """
         req = await TransferRequest.find_one(TransferRequest.id == request_id)
-        if not req or req.status != "OLD_DIVISION_REVIEW":
+        if not req or req.status != RequestStatus.OLD_DIVISION_REVIEW:
             raise ServiceError(f"❌ Запрос #{request_id} не найден или уже обработан.")
 
         if officer.discord_id == req.user_id:
@@ -159,7 +160,7 @@ class TransferService:
                                            "❌ У вас нет прав согласовывать перевод от старого подразделения.")
 
         updated_dict = await atomic_status_transition(
-            TransferRequest.get_pymongo_collection(), request_id, "OLD_DIVISION_REVIEW", "NEW_DIVISION_REVIEW",
+            TransferRequest.get_pymongo_collection(), request_id, RequestStatus.OLD_DIVISION_REVIEW, RequestStatus.NEW_DIVISION_REVIEW,
             extra_fields={"old_reviewer_id": interaction.user.id, "old_reviewed_at": discord.utils.utcnow()},
         )
         if not updated_dict:
@@ -193,7 +194,7 @@ class TransferService:
                 либо не имеет прав одобрять перевод в целевое подразделение.
         """
         req = await TransferRequest.find_one(TransferRequest.id == request_id)
-        if not req or req.status != "NEW_DIVISION_REVIEW":
+        if not req or req.status != RequestStatus.NEW_DIVISION_REVIEW:
             raise ServiceError(f"❌ Запрос #{request_id} не найден или уже обработан.")
 
         if officer.discord_id == req.user_id:
@@ -203,7 +204,7 @@ class TransferService:
                                            "❌ У вас нет прав одобрять перевод в данное подразделение.")
 
         updated_dict = await atomic_status_transition(
-            TransferRequest.get_pymongo_collection(), request_id, "NEW_DIVISION_REVIEW", "APPROVED",
+            TransferRequest.get_pymongo_collection(), request_id, RequestStatus.NEW_DIVISION_REVIEW, RequestStatus.APPROVED,
             extra_fields={"new_reviewer_id": interaction.user.id, "new_reviewed_at": discord.utils.utcnow()},
         )
         if not updated_dict:
@@ -242,7 +243,7 @@ class TransferService:
                 либо не имеет прав отклонить данное заявление.
         """
         req = await TransferRequest.find_one(TransferRequest.id == request_id)
-        if not req or req.status not in ("OLD_DIVISION_REVIEW", "NEW_DIVISION_REVIEW"):
+        if not req or req.status not in (RequestStatus.OLD_DIVISION_REVIEW, RequestStatus.NEW_DIVISION_REVIEW):
             raise ServiceError(f"❌ Запрос #{request_id} не найден или уже обработан.")
 
         if officer.discord_id == req.user_id:
@@ -252,7 +253,7 @@ class TransferService:
                                            "❌ У вас нет прав отклонять данное заявление.")
 
         now = discord.utils.utcnow()
-        update_fields: dict = {"status": "REJECTED", "reject_reason": reason}
+        update_fields: dict = {"status": RequestStatus.REJECTED, "reject_reason": reason}
         if officer.division == req.old_division_id:
             update_fields["old_reviewer_id"] = interaction.user.id
             update_fields["old_reviewed_at"] = now
@@ -261,7 +262,7 @@ class TransferService:
             update_fields["new_reviewed_at"] = now
 
         updated_dict = await atomic_status_transition(
-            TransferRequest.get_pymongo_collection(), request_id, ["OLD_DIVISION_REVIEW", "NEW_DIVISION_REVIEW"], "REJECTED",
+            TransferRequest.get_pymongo_collection(), request_id, [RequestStatus.OLD_DIVISION_REVIEW, RequestStatus.NEW_DIVISION_REVIEW], RequestStatus.REJECTED,
             extra_fields=update_fields,
         )
         if not updated_dict:
@@ -280,7 +281,7 @@ class TransferService:
     async def cancel_transfer(request_id: int, user_id: int) -> None:
         """Атомарно отменяет собственную заявку на перевод, пока она на первом этапе."""
         updated_dict = await atomic_status_transition(
-            TransferRequest.get_pymongo_collection(), request_id, ["OLD_DIVISION_REVIEW", "NEW_DIVISION_REVIEW"], "REJECTED",
+            TransferRequest.get_pymongo_collection(), request_id, [RequestStatus.OLD_DIVISION_REVIEW, RequestStatus.NEW_DIVISION_REVIEW], RequestStatus.REJECTED,
             extra_fields={"reject_reason": "Отменено автором"},
             extra_filter={"user_id": user_id},
         )

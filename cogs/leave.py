@@ -6,6 +6,7 @@ import discord
 from bot import Bot
 from core import config
 from database.models import LeaveRequest, LeaveType, User
+from database.status import RequestStatus
 from services.member import MemberService
 from services.notifications import notify_leave_expired
 from ui.embeds.leave import leave_embed
@@ -22,7 +23,7 @@ _timers_restored = False
 async def _activate_leave(bot: Bot, request_id: int):
     """Выдает роль и ник, когда наступает дата начала отпуска."""
     request = await LeaveRequest.find_one(LeaveRequest.id == request_id)
-    if not request or request.status != "APPROVED":
+    if not request or request.status != RequestStatus.APPROVED:
         return
 
     member = await bot.getch_member(request.user_id)
@@ -77,7 +78,7 @@ async def schedule_leave_activation(bot: Bot, request: LeaveRequest):
 async def _expire_leave(bot: Bot, request_id: int):
     """Завершает отпуск по истечении срока."""
     updated_dict = await atomic_status_transition(
-        LeaveRequest.get_pymongo_collection(), request_id, "APPROVED", "EXPIRED",
+        LeaveRequest.get_pymongo_collection(), request_id, RequestStatus.APPROVED, RequestStatus.EXPIRED,
     )
     if not updated_dict:
         return
@@ -160,7 +161,7 @@ async def restore_leave_timers(bot: Bot):
     if _timers_restored:
         return
 
-    active = await LeaveRequest.find(LeaveRequest.status == "APPROVED").to_list()
+    active = await LeaveRequest.find(LeaveRequest.status == RequestStatus.APPROVED).to_list()
     now = discord.utils.utcnow()
 
     for req in active:

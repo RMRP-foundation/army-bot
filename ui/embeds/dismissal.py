@@ -2,7 +2,7 @@ import discord
 
 from database.models import DismissalRequest, DismissalType
 from database import divisions
-from database.status import get_status_display
+from database.status import get_status_display, RequestStatus
 from utils.user_data import format_static, format_rank
 
 
@@ -28,7 +28,7 @@ def dismissal_embed(request: DismissalRequest) -> discord.Embed:
         embed.add_field(name="Должность", value=request.position, inline=True)
     embed.add_field(name="Причина", value=request.type.value, inline=False)
 
-    if request.status == "REJECTED" and request.reject_reason:
+    if request.status == RequestStatus.REJECTED and request.reject_reason:
         embed.add_field(name="Причина отказа", value=request.reject_reason, inline=False)
 
     if request.reviewer_id:

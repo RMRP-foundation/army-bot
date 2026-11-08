@@ -4,6 +4,7 @@ import discord
 
 from core.exceptions import ServiceError
 from database.models import DismissalType, User, DismissalRequest
+from database.status import RequestStatus
 from services.authorization import AuthorizationService
 from services.dismissal import DismissalService
 from ui.embeds.dismissal import dismissal_embed
@@ -87,7 +88,7 @@ class DismissalManagementButton(
 
     async def _handle_reject_modal(self, interaction: discord.Interaction, officer: User) -> None:
         req = await DismissalRequest.find_one(DismissalRequest.id == self.request_id)
-        if not req or req.status != "PENDING":
+        if not req or req.status != RequestStatus.PENDING:
             await safe_respond(interaction, f"❌ Рапорт #{self.request_id} не найден или уже обработан.")
             return
 
@@ -143,7 +144,7 @@ class DismissalManagementButton(
 
         except ServiceError as error:
             req = await DismissalRequest.find_one(DismissalRequest.id == self.request_id)
-            if req and req.status != "PENDING":
+            if req and req.status != RequestStatus.PENDING:
                 await safe_edit_message(
                     message = interaction.message,
                     content = build_mentions([req.user_id, interaction.user.id]),

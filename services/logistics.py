@@ -8,6 +8,7 @@ from core import config
 from core.exceptions import ServiceError
 from database.counters import get_next_id
 from database.models import LogisticsRequest, LogisticsType, User
+from database.status import RequestStatus
 from ui.embeds.logistics import logistics_embed
 from utils.helpers import safe_publish_request, build_mentions
 from utils.mongo_atomic import atomic_status_transition
@@ -17,8 +18,8 @@ from utils.user_data import set_name_if_changed
 logger = logging.getLogger(__name__)
 
 STATUS_MAP = {
-    "approve": ("APPROVED", "Завершил", "👍"),
-    "reject": ("REJECTED", "Отклонил", "👎"),
+    "approve": (RequestStatus.APPROVED, "Завершил", "👍"),
+    "reject": (RequestStatus.REJECTED, "Отклонил", "👎"),
 }
 
 
@@ -99,7 +100,7 @@ class LogisticsService:
 
         status, prefix, emoji = STATUS_MAP[action]
         updated_dict = await atomic_status_transition(
-            LogisticsRequest.get_pymongo_collection(), request_id, "PENDING", status,
+            LogisticsRequest.get_pymongo_collection(), request_id, RequestStatus.PENDING, status,
             extra_fields={"reviewer_name": interaction.user.display_name},
         )
         if not updated_dict:

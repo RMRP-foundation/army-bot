@@ -2,7 +2,7 @@ import discord
 
 from database import divisions
 from database.models import TransferRequest, User
-from database.status import get_status_display
+from database.status import get_status_display, RequestStatus
 from utils.user_data import format_static, format_rank
 
 
@@ -16,9 +16,9 @@ def transfer_embed(request: TransferRequest, user: User) -> discord.Embed:
     old_abbr = old_div.abbreviation if old_div else "Нет"
     new_abbr = new_div.abbreviation if new_div else "Нет"
 
-    if request.status == "OLD_DIVISION_REVIEW":
+    if request.status == RequestStatus.OLD_DIVISION_REVIEW:
         context = f" в {old_abbr}"
-    elif request.status == "NEW_DIVISION_REVIEW":
+    elif request.status == RequestStatus.NEW_DIVISION_REVIEW:
         context = f" в {new_abbr}"
     else:
         context = ""

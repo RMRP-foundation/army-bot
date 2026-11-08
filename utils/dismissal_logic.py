@@ -5,6 +5,7 @@ import discord
 from core.config import BLACKLIST_MENTIONS, PENALTY_THRESHOLD, CHANNELS
 from core.constants import DivisionId
 from database.models import User, Blacklist, LeaveRequest
+from database.status import RequestStatus
 from ui.embeds.leave import leave_embed
 from utils.helpers import safe_edit_message, build_mentions
 from utils.user_data import format_static
@@ -74,17 +75,17 @@ async def cleanup_user_leaves(bot, user_id: int):
 
     pending_reqs = await LeaveRequest.find(
         LeaveRequest.user_id == user_id,
-        LeaveRequest.status == "PENDING"
+        LeaveRequest.status == RequestStatus.PENDING
     ).to_list()
 
     for req in pending_reqs:
-        req.status = "REJECTED"
+        req.status = RequestStatus.REJECTED
         await req.save()
         await _update_leave_message(bot, req)
 
     active_reqs = await LeaveRequest.find(
         LeaveRequest.user_id == user_id,
-        LeaveRequest.status == "APPROVED"
+        LeaveRequest.status == RequestStatus.APPROVED
     ).to_list()
 
     for req in active_reqs:
@@ -96,7 +97,7 @@ async def cleanup_user_leaves(bot, user_id: int):
         cancel_leave_timer(req.id)
         cancel_activation_timer(req.id)
 
-        req.status = "ANNULLED"
+        req.status = RequestStatus.ANNULLED
         req.annuller_id = bot.user.id
         req.annulled_at = discord.utils.utcnow()
         await req.save()

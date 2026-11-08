@@ -11,6 +11,7 @@ from core.exceptions import ServiceError
 from database import divisions
 from database.counters import get_next_id
 from database.models import ReinstatementData, ReinstatementRequest, User
+from database.status import RequestStatus
 from services.audit import AuditAction, audit_logger
 from services.member import MemberService
 from services.notifications import notify_reinstatement_approved, notify_reinstatement_rejected, \
@@ -63,7 +64,7 @@ class ReinstatementService:
         """Проверяет, что у пользователя нет заявления в статусе PENDING или ATTESTATION."""
         opened_request = await ReinstatementRequest.find_one(
             ReinstatementRequest.user == user_id,
-            {"status": {"$in": ["PENDING", "ATTESTATION"]}},
+            {"status": {"$in": [RequestStatus.PENDING, RequestStatus.ATTESTATION]}},
         )
         if opened_request is not None:
             raise ServiceError("### У вас уже есть открытое заявление на рассмотрении.\nОжидайте его рассмотрения.")
@@ -142,13 +143,13 @@ class ReinstatementService:
             ServiceError: Если заявление не найдено/уже обработано, либо нарушены права доступа.
         """
         req = await ReinstatementRequest.find_one(ReinstatementRequest.id == request_id)
-        if not req or req.status != "PENDING":
+        if not req or req.status != RequestStatus.PENDING:
             raise ServiceError(f"❌ Заявление #{request_id} не найдено или уже обработано.")
 
         cls.validate_reviewer_permissions(officer, req.user)
 
         updated_dict = await atomic_status_transition(
-            ReinstatementRequest.get_pymongo_collection(), request_id, "PENDING", "ATTESTATION",
+            ReinstatementRequest.get_pymongo_collection(), request_id, RequestStatus.PENDING, RequestStatus.ATTESTATION,
         )
         if not updated_dict:
             raise ServiceError(f"❌ Заявление #{request_id} уже обработано.")
@@ -174,13 +175,13 @@ class ReinstatementService:
             ServiceError: Если заявление не найдено/не на этапе переаттестации, либо нарушены права доступа.
         """
         req = await ReinstatementRequest.find_one(ReinstatementRequest.id == request_id)
-        if not req or req.status != "ATTESTATION":
+        if not req or req.status != RequestStatus.ATTESTATION:
             raise ServiceError(f"❌ Заявление #{request_id} не найдено или не на этапе переаттестации.")
 
         cls.validate_reviewer_permissions(officer, req.user)
 
         updated_dict = await atomic_status_transition(
-            ReinstatementRequest.get_pymongo_collection(), request_id, "ATTESTATION", "APPROVED",
+            ReinstatementRequest.get_pymongo_collection(), request_id, RequestStatus.ATTESTATION, RequestStatus.APPROVED,
             extra_fields={"rank": rank_index},
         )
         if not updated_dict:
@@ -218,13 +219,13 @@ class ReinstatementService:
             ServiceError: Если заявление не найдено/уже обработано, либо нарушены права доступа.
         """
         req = await ReinstatementRequest.find_one(ReinstatementRequest.id == request_id)
-        if not req or req.status not in ("PENDING", "ATTESTATION"):
+        if not req or req.status not in (RequestStatus.PENDING, RequestStatus.ATTESTATION):
             raise ServiceError(f"❌ Заявление #{request_id} не найдено или уже обработано.")
 
         cls.validate_reviewer_permissions(officer, req.user)
 
         updated_dict = await atomic_status_transition(
-            ReinstatementRequest.get_pymongo_collection(), request_id, ["PENDING", "ATTESTATION"], "REJECTED",
+            ReinstatementRequest.get_pymongo_collection(), request_id, [RequestStatus.PENDING, RequestStatus.ATTESTATION], RequestStatus.REJECTED,
             extra_fields={"reject_reason": reason},
         )
         if not updated_dict:

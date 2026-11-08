@@ -5,6 +5,7 @@ import discord
 from core.exceptions import ServiceError
 from database import divisions
 from database.models import Division, TransferRequest
+from database.status import RequestStatus
 from services.authorization import AuthorizationService
 from services.transfers import TransferService
 from ui.modals.transfers import TransferModal
@@ -163,7 +164,7 @@ class RejectTransferButton(
             return
 
         req = await TransferRequest.find_one(TransferRequest.id == self.request_id)
-        if not req or req.status not in ("OLD_DIVISION_REVIEW", "NEW_DIVISION_REVIEW"):
+        if not req or req.status not in (RequestStatus.OLD_DIVISION_REVIEW, RequestStatus.NEW_DIVISION_REVIEW):
             await safe_respond(interaction, f"❌ Запрос #{self.request_id} не найден или уже обработан.")
             return
 
@@ -222,7 +223,7 @@ class TransferManagementView(discord.ui.View):
     def __init__(self, request: TransferRequest, destination: Division):
         super().__init__(timeout=None)
 
-        if request.status == "NEW_DIVISION_REVIEW":
+        if request.status == RequestStatus.NEW_DIVISION_REVIEW:
             self.add_item(ApproveNewDivisionButton(request_id=request.id, division_id=destination.division_id))
         else:
             self.add_item(ApproveOldDivisionButton(request_id=request.id, division_id=request.old_division_id))
