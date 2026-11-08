@@ -7,25 +7,36 @@ from utils.helpers import safe_respond
 from utils.user_data import clean_static, clean_name
 
 
-class StaticInputModal(discord.ui.Modal, title="Введите ваш статик"):
-    static_label = static_label()
+class ProfileInputModal(discord.ui.Modal):
+    def __init__(self, need_name: bool = True, need_static: bool = True):
+        if need_name and need_static:
+            title = "Заполнение профиля"
+        elif need_name:
+            title = "Введите ваше Имя и Фамилию"
+        else:
+            title = "Введите ваш статик"
+
+        super().__init__(title=title)
+        self.need_name = need_name
+        self.need_static = need_static
+
+        if need_name:
+            self.name_comp = name_input()
+            self.add_item(self.name_comp)
+        if need_static:
+            self.static_comp = static_label()
+            self.add_item(self.static_comp)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         try:
-            static_id = clean_static(self.static_label.component.value)
-            await MemberService.update_self_static(interaction, static_id)
-            await safe_respond(interaction, "✅ Статик сохранен. Теперь вы можете повторить действие.")
-        except ServiceError as error:
-            await safe_respond(interaction, error.message)
+            full_name = clean_name(self.name_comp.value) if self.need_name else None
+            static_id = clean_static(self.static_comp.component.value) if self.need_static else None
 
-
-class NameInputModal(discord.ui.Modal, title="Введите ваше Имя и Фамилию"):
-    name = name_input()
-
-    async def on_submit(self, interaction: discord.Interaction) -> None:
-        try:
-            full_name = clean_name(self.name.value)
-            await MemberService.update_self_name(interaction, full_name)
-            await safe_respond(interaction, "✅ Имя успешно сохранено. Теперь вы можете повторить действие.")
+            await MemberService.update_self_profile(
+                interaction=interaction,
+                full_name=full_name,
+                static_id=static_id,
+            )
+            await safe_respond(interaction, "✅ Данные профиля сохранены. Повторите ваше действие.")
         except ServiceError as error:
             await safe_respond(interaction, error.message)

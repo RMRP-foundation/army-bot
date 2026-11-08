@@ -26,7 +26,8 @@ async def _custom_view_on_error(
 async def on_tree_error(
     interaction: discord.Interaction, error: app_commands.AppCommandError | str
 ):
-    if isinstance(error, ModalInputRequired):
+    original_error = getattr(error, "original", error)
+    if isinstance(original_error, ModalInputRequired):
         return
 
     traceback_info = traceback.format_exc()

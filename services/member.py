@@ -173,41 +173,66 @@ class MemberService:
         )
 
     @classmethod
-    async def update_self_static(cls, interaction: discord.Interaction, static_id: int) -> None:
+    async def update_self_profile(
+            cls,
+            interaction: discord.Interaction,
+            full_name: str | None = None,
+            static_id: int | None = None,
+    ) -> None:
         user = await User.get_by_discord_id(interaction.user.id)
         if not user:
             raise ServiceError("❌ Пользователь не найден в базе данных.")
 
-        user.static = static_id
-        await user.save()
+        name_changed = False
+        if full_name:
+            name_changed = set_name_if_changed(user, full_name)
 
-        await cls._send_profile_log(
-            interaction=interaction,
-            user=user,
-            action_title="статика",
-            value_name="Введенный статик",
-            value_str=f"`{format_static(static_id)}`",
-        )
+        static_changed = False
+        if static_id is not None and user.static != static_id:
+            user.static = static_id
+            static_changed = True
 
-    @classmethod
-    async def update_self_name(cls, interaction: discord.Interaction, full_name: str) -> None:
-        user = await User.get_by_discord_id(interaction.user.id)
-        if not user:
-            raise ServiceError("❌ Пользователь не найден в базе данных.")
-
-        if set_name_if_changed(user, full_name):
+        if name_changed or static_changed:
             await user.save()
 
-        await MemberService.sync_member_discord(
-            member=interaction.user,
-            user_db=user,
-            reason="Самостоятельный ввод имени",
-        )
+        if name_changed and isinstance(interaction.user, discord.Member):
+            await MemberService.sync_member_discord(
+                member=interaction.user,
+                user_db=user,
+                reason="Самостоятельный ввод данных профиля",
+            )
 
-        await cls._send_profile_log(
-            interaction=interaction,
-            user=user,
-            action_title="имени",
-            value_name="Введенное имя",
-            value_str=f"`{user.full_name}`",
+        channel = interaction.client.get_channel(config.CHANNELS["static_log"])
+        if not channel:
+            return
+
+        if full_name and static_id is not None:
+            title = "Самостоятельный ввод профиля"
+        elif full_name:
+            title = "Самостоятельный ввод имени"
+        else:
+            title = "Самостоятельный ввод статика"
+
+        embed = discord.Embed(
+            title=title,
+            color=discord.Color.orange(),
+        )
+        embed.add_field(
+            name="Пользователь",
+            value=f"{interaction.user.mention} ({interaction.user.display_name})",
+            inline=False,
+        )
+        embed.add_field(name="Имя в системе", value=user.full_name or "Не указано", inline=False)
+        embed.add_field(name="Звание", value=format_rank(user.rank), inline=False)
+
+        if full_name:
+            embed.add_field(name="Введенное имя", value=f"`{user.full_name}`", inline=False)
+        if static_id is not None:
+            embed.add_field(name="Введенный статик", value=f"`{format_static(static_id)}`", inline=False)
+
+        embed.set_footer(text="Проверьте корректность данных")
+
+        await channel.send(
+            content="-# Требуется проверка. При несовпадении — измените через команду редактирования.",
+            embed=embed,
         )
