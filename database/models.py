@@ -3,7 +3,7 @@ from enum import Enum
 from typing import Dict
 
 import discord
-from beanie import Document, Indexed
+from beanie import Document, Indexed, before_event, Insert
 from pydantic import BaseModel, Field
 from pymongo import IndexModel
 
@@ -63,9 +63,23 @@ class User(Document):
     division: int | None = None
     leave_status: str | None = None
     invited_at: datetime.datetime | None = None
+    transferred_at: datetime.datetime | None = None
     blacklist: Blacklist | None = None
     last_supply_at: datetime.datetime | None = None
     pre_inited: bool = False
+
+    def __setattr__(self, name: str, value) -> None:
+        if name == "division" and value != getattr(self, "division", None):
+            super().__setattr__(
+                "transferred_at",
+                discord.utils.utcnow() if value is not None else None,
+            )
+        super().__setattr__(name, value)
+
+    @before_event(Insert)
+    def _on_insert(self) -> None:
+        if self.division is not None and self.transferred_at is None:
+            self.transferred_at = discord.utils.utcnow()
 
     @property
     def full_name(self) -> str | None:
@@ -345,7 +359,7 @@ class PromotionRequest(Document):
     evidence: Dict[str, str] = Field(default_factory=dict)
     score: str | None = None
     reject_reason: str | None = None
-    status: str = RequestStatus.PENDING  # PENDING, APPROVED, PROMOTED, REJECTED, CANCELLED
+    status: str = RequestStatus.PENDING  # PENDING, APPROVED, PROMOTED, REJECTED
     reviewer_id: int | None = None
     promoted_by: int | None = None
     created_at: datetime.datetime = Field(default_factory=discord.utils.utcnow)

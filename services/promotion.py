@@ -265,16 +265,19 @@ class PromotionService:
 
         new_division = target_user_db.division
         new_position = target_user_db.position
+        new_transferred_at = target_user_db.transferred_at
         if div.division_id == DivisionId.VA and request.target_rank == RankIndex.JUNIOR_SERGEANT:
             if vbp := divisions.get_division(DivisionId.VBP):
                 new_division = vbp.division_id
+                new_transferred_at = discord.utils.utcnow()
 
         if div.division_id == DivisionId.VK and request.target_rank == RankIndex.JUNIOR_LIEUTENANT:
             new_position = "Сотрудник отдела по кадровой работе"
 
         await target_user_db.set({User.rank: request.target_rank,
                                   User.division: new_division,
-                                  User.position: new_position})
+                                  User.position: new_position,
+                                  User.transferred_at: new_transferred_at,})
 
         if member:
             await MemberService.sync_member_discord(
