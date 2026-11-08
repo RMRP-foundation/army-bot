@@ -184,7 +184,7 @@ class LeaveService:
         if not target_user_db or target_user_db.rank is None:
             await atomic_status_transition(
                 LeaveRequest.get_pymongo_collection(), request_id, RequestStatus.PENDING, RequestStatus.REJECTED,
-                extra_fields={"reviewer_id": interaction.user.id, "reviewed_at": discord.utils.utcnow()},
+                extra_fields={"reviewer_id": interaction.user.id},
             )
             raise ServiceError("❌ Пользователь не состоит на службе.")
 
@@ -245,7 +245,7 @@ class LeaveService:
 
         updated_dict = await atomic_status_transition(
             LeaveRequest.get_pymongo_collection(), request_id, RequestStatus.PENDING, RequestStatus.REJECTED,
-            extra_fields={"reviewer_id": interaction.user.id, "reviewed_at": discord.utils.utcnow()},
+            extra_fields={"reviewer_id": interaction.user.id},
         )
         if not updated_dict:
             raise ServiceError(f"❌ Заявление #{request_id} не найдено или уже обработано.")
