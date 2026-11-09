@@ -30,6 +30,7 @@ class GiveSupplyModal(discord.ui.Modal, title="Выдача снабжения")
     reason = discord.ui.TextInput(
         label="Причина выдачи",
         placeholder="Укажите причину выдачи снабжения",
+        max_length=500,
         required=False,
     )
 
